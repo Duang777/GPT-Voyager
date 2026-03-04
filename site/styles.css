@@ -1,0 +1,426 @@
+:root {
+  --bg: #fff7ea;
+  --bg-soft: #ffe7bb;
+  --text: #1f1300;
+  --text-muted: #5d4728;
+  --line: #f0d8b0;
+  --brand: #f26a1b;
+  --brand-strong: #d94d00;
+  --card: rgba(255, 255, 255, 0.82);
+  --shadow: 0 16px 50px rgba(126, 72, 12, 0.18);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  min-height: 100vh;
+  color: var(--text);
+  background: linear-gradient(150deg, #fff8ef 0%, #ffedce 55%, #ffe1b0 100%);
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+.orb {
+  position: fixed;
+  z-index: -3;
+  border-radius: 50%;
+  filter: blur(10px);
+  pointer-events: none;
+}
+
+.orb-a {
+  width: 28rem;
+  aspect-ratio: 1;
+  top: -8rem;
+  right: -6rem;
+  background: radial-gradient(circle at 30% 30%, #ffc971 0%, #ff944b 50%, transparent 72%);
+  animation: driftA 16s ease-in-out infinite alternate;
+}
+
+.orb-b {
+  width: 22rem;
+  aspect-ratio: 1;
+  bottom: -7rem;
+  left: -6rem;
+  background: radial-gradient(circle at 60% 40%, #ffb87a 0%, #ff7b36 56%, transparent 75%);
+  animation: driftB 20s ease-in-out infinite alternate;
+}
+
+.grid-mask {
+  position: fixed;
+  z-index: -2;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 132, 0, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 132, 0, 0.08) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(circle at 50% 10%, black 0%, rgba(0, 0, 0, 0.34) 56%, transparent 100%);
+  pointer-events: none;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.95rem clamp(1rem, 3vw, 2.5rem);
+  backdrop-filter: blur(10px);
+  background: rgba(255, 244, 224, 0.7);
+  border-bottom: 1px solid rgba(240, 182, 108, 0.55);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  text-decoration: none;
+  color: var(--text);
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.brand-mark {
+  width: 2.2rem;
+  aspect-ratio: 1;
+  border-radius: 0.65rem;
+  display: grid;
+  place-items: center;
+  color: white;
+  background: linear-gradient(145deg, #ff9030 0%, #dc4e00 100%);
+  box-shadow: 0 8px 20px rgba(169, 78, 4, 0.35);
+}
+
+.topnav {
+  display: inline-flex;
+  gap: 1.2rem;
+}
+
+.topnav a {
+  text-decoration: none;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.topnav a:hover {
+  color: var(--text);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  border-radius: 999px;
+  font-weight: 700;
+  border: 1px solid transparent;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, background 0.2s ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.btn-solid {
+  color: #fff;
+  padding: 0.8rem 1.35rem;
+  background: linear-gradient(145deg, #ff8d2d 0%, #d64a00 100%);
+  box-shadow: 0 10px 24px rgba(190, 85, 0, 0.35);
+}
+
+.btn-solid:hover {
+  box-shadow: 0 14px 30px rgba(180, 80, 0, 0.42);
+}
+
+.btn-ghost {
+  color: var(--text);
+  padding: 0.72rem 1.2rem;
+  border-color: rgba(214, 127, 35, 0.4);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+main,
+.footer {
+  width: min(1100px, calc(100% - 2rem));
+  margin-inline: auto;
+}
+
+.hero {
+  padding: clamp(2.5rem, 7vw, 5.2rem) 0 2rem;
+}
+
+.eyebrow {
+  margin: 0;
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.78rem;
+  color: #a65216;
+}
+
+.hero h1 {
+  margin: 0.6rem 0 1rem;
+  max-width: 18ch;
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  line-height: 1.05;
+}
+
+.hero-copy {
+  margin: 0;
+  max-width: 65ch;
+  font-size: clamp(1rem, 1.4vw, 1.18rem);
+  color: #4f3b1f;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  margin-top: 1.65rem;
+}
+
+.hero-metrics {
+  list-style: none;
+  margin: 2rem 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.hero-metrics li {
+  background: var(--card);
+  border: 1px solid rgba(241, 184, 109, 0.6);
+  border-radius: 1rem;
+  padding: 0.9rem 1rem;
+  box-shadow: var(--shadow);
+}
+
+.metric-number {
+  display: block;
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+  font-weight: 700;
+  font-size: clamp(1.2rem, 2.4vw, 1.65rem);
+}
+
+.metric-label {
+  display: block;
+  color: #6a4d25;
+  font-size: 0.9rem;
+}
+
+.section {
+  margin-top: clamp(2rem, 7vw, 4.5rem);
+}
+
+.section-heading h2 {
+  margin: 0.4rem 0 0;
+  font-size: clamp(1.35rem, 3.5vw, 2.25rem);
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+}
+
+.card-grid {
+  margin-top: 1.2rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.95rem;
+}
+
+.feature-card {
+  background: var(--card);
+  border: 1px solid rgba(241, 184, 109, 0.65);
+  border-radius: 1rem;
+  padding: 1.05rem;
+  box-shadow: var(--shadow);
+}
+
+.feature-card h3 {
+  margin: 0;
+  font-size: 1.06rem;
+}
+
+.feature-card p {
+  margin: 0.55rem 0 0;
+  color: #5a4424;
+}
+
+.workflow-list {
+  list-style: none;
+  margin: 1.25rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.workflow-list li {
+  display: grid;
+  grid-template-columns: 4.3rem 1fr;
+  align-items: center;
+  gap: 0.9rem;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(238, 179, 100, 0.6);
+  border-radius: 1rem;
+  padding: 1rem;
+}
+
+.step-index {
+  width: 3.5rem;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 0.8rem;
+  background: linear-gradient(145deg, #ffd095 0%, #ffa251 100%);
+  color: #7d2c00;
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+  font-size: 1.08rem;
+  font-weight: 700;
+}
+
+.workflow-list h3 {
+  margin: 0;
+}
+
+.workflow-list p {
+  margin: 0.35rem 0 0;
+  color: #594528;
+}
+
+.install-panel {
+  margin-top: 1.2rem;
+  padding: 1.2rem 1.15rem;
+  border-radius: 1rem;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 242, 223, 0.9) 100%);
+  border: 1px solid rgba(233, 171, 93, 0.65);
+  box-shadow: var(--shadow);
+}
+
+.install-panel p {
+  margin: 0;
+}
+
+.install-panel ol {
+  margin: 0.8rem 0;
+  padding-left: 1.2rem;
+}
+
+.install-panel code {
+  display: inline-block;
+  margin-top: 0.4rem;
+  padding: 0.28rem 0.44rem;
+  border-radius: 0.4rem;
+  background: rgba(255, 193, 123, 0.3);
+  font-family: "Space Grotesk", "Consolas", monospace;
+}
+
+.install-note {
+  color: #5a4320;
+}
+
+.footer {
+  margin-top: 4rem;
+  margin-bottom: 1.5rem;
+  border-top: 1px solid rgba(221, 162, 89, 0.5);
+  padding-top: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.footer p {
+  margin: 0;
+  color: #684921;
+}
+
+.footer a {
+  color: #803300;
+  font-weight: 700;
+}
+
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 0.65s ease, transform 0.65s ease;
+}
+
+.reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (max-width: 980px) {
+  .card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    flex-wrap: wrap;
+  }
+
+  .topnav {
+    order: 3;
+    width: 100%;
+    justify-content: center;
+    padding-top: 0.2rem;
+  }
+
+  .hero h1 {
+    max-width: 100%;
+  }
+
+  .hero-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-list li {
+    grid-template-columns: 1fr;
+  }
+
+  .footer {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@keyframes driftA {
+  from {
+    transform: translate(0, 0) scale(1);
+  }
+  to {
+    transform: translate(-32px, 26px) scale(1.08);
+  }
+}
+
+@keyframes driftB {
+  from {
+    transform: translate(0, 0) scale(1);
+  }
+  to {
+    transform: translate(26px, -22px) scale(1.05);
+  }
+}

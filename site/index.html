@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="GPT Voyager 是一个面向 ChatGPT 网页的效率插件，提供会话管理、提示词库、导出备份与公式/图表工作台。"
+    />
+    <title>GPT Voyager | ChatGPT 效率插件</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="orb orb-a" aria-hidden="true"></div>
+    <div class="orb orb-b" aria-hidden="true"></div>
+    <div class="grid-mask" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <a class="brand" href="#top" aria-label="GPT Voyager 首页">
+        <span class="brand-mark">GV</span>
+        <span class="brand-text">GPT Voyager</span>
+      </a>
+      <nav class="topnav" aria-label="主导航">
+        <a href="#features">功能</a>
+        <a href="#workflow">流程</a>
+        <a href="#install">安装</a>
+      </nav>
+      <a class="btn btn-ghost" href="https://github.com/<your-username>/GPT" target="_blank" rel="noreferrer">
+        GitHub
+      </a>
+    </header>
+
+    <main id="top">
+      <section class="hero reveal">
+        <p class="eyebrow">FOR POWER USERS OF CHATGPT</p>
+        <h1>把零散对话，整理成可复用的生产系统。</h1>
+        <p class="hero-copy">
+          GPT Voyager 让你在 ChatGPT 页面直接完成会话索引、分类检索、提示词复用、Markdown/HTML 导出、
+          JSON 备份、公式与 Mermaid 工作台，一次安装，持续提效。
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-solid" href="#install">立即安装</a>
+          <a class="btn btn-ghost" href="#workflow">查看演示流程</a>
+        </div>
+        <ul class="hero-metrics" aria-label="核心指标">
+          <li>
+            <span class="metric-number">30s</span>
+            <span class="metric-label">首次价值时间</span>
+          </li>
+          <li>
+            <span class="metric-number">100%</span>
+            <span class="metric-label">本地数据持久化</span>
+          </li>
+          <li>
+            <span class="metric-number">9+</span>
+            <span class="metric-label">核心功能模块</span>
+          </li>
+        </ul>
+      </section>
+
+      <section id="features" class="section reveal">
+        <div class="section-heading">
+          <p class="eyebrow">CORE CAPABILITIES</p>
+          <h2>你会高频用到的功能，已经组合好</h2>
+        </div>
+        <div class="card-grid">
+          <article class="feature-card">
+            <h3>会话索引与快速检索</h3>
+            <p>自动扫描可见会话并建立本地索引，支持按标题、ID、标签、文件夹快速定位。</p>
+          </article>
+          <article class="feature-card">
+            <h3>分类管理与批量操作</h3>
+            <p>文件夹 + 标签双维管理，支持批量归类、批量加/去标签与一键撤销。</p>
+          </article>
+          <article class="feature-card">
+            <h3>提示词库与变量模板</h3>
+            <p>保存可复用 Prompt 片段，支持 `{{变量}}` 填充后直接插入输入框。</p>
+          </article>
+          <article class="feature-card">
+            <h3>会话导出与数据备份</h3>
+            <p>单条会话导出 Markdown/HTML，并可导出 JSON 备份进行跨设备迁移。</p>
+          </article>
+          <article class="feature-card">
+            <h3>公式工作台</h3>
+            <p>提取会话公式，支持 LaTeX 复制、MathML 复制与来源定位，适配论文和技术写作。</p>
+          </article>
+          <article class="feature-card">
+            <h3>Mermaid 图表工作台</h3>
+            <p>自动识别图表代码块，支持预览、源码复制和跳转定位，图形表达不再断链。</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="workflow" class="section reveal">
+        <div class="section-heading">
+          <p class="eyebrow">WORKFLOW</p>
+          <h2>典型 4 步工作流</h2>
+        </div>
+        <ol class="workflow-list">
+          <li>
+            <span class="step-index">01</span>
+            <div>
+              <h3>抓取会话</h3>
+              <p>在 ChatGPT 页面自动扫描并同步当前会话列表，形成可搜索索引。</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-index">02</span>
+            <div>
+              <h3>分类沉淀</h3>
+              <p>按项目/主题打标签入文件夹，让长期对话从“历史记录”变成“知识资产”。</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-index">03</span>
+            <div>
+              <h3>复用加速</h3>
+              <p>在提示词库中复用模板和变量，一键插入，减少重复输入成本。</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-index">04</span>
+            <div>
+              <h3>导出归档</h3>
+              <p>将关键对话导出为 Markdown/HTML，配合 JSON 备份形成可迁移档案。</p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <section id="install" class="section reveal">
+        <div class="section-heading">
+          <p class="eyebrow">INSTALL</p>
+          <h2>3 分钟上线到 GitHub Pages</h2>
+        </div>
+        <div class="install-panel">
+          <p>项目已内置 Pages 自动部署工作流。你只需：</p>
+          <ol>
+            <li>把代码推送到 GitHub 仓库（默认分支 `main`）。</li>
+            <li>在仓库 `Settings > Pages` 选择 `GitHub Actions` 作为来源。</li>
+            <li>等待 `Deploy static site to GitHub Pages` 工作流完成。</li>
+          </ol>
+          <p class="install-note">
+            发布地址通常是：
+            <code>https://&lt;你的 GitHub 用户名&gt;.github.io/&lt;仓库名&gt;/</code>
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer reveal">
+      <p>GPT Voyager • Build Focused, Ship Faster</p>
+      <a href="https://github.com/<your-username>/GPT" target="_blank" rel="noreferrer">
+        查看源码与发布记录
+      </a>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

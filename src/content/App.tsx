@@ -1,0 +1,3514 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createEmptyClassificationState,
+  createEntityId,
+  isDuplicateName,
+  loadClassificationState,
+  normalizeName,
+  saveClassificationState,
+  type ClassificationState,
+  type ConversationClassificationMeta
+} from "./classificationStore";
+import {
+  collectVisibleConversations,
+  type ConversationEntry,
+  loadConversationIndex,
+  mergeConversationIndex,
+  observeConversationList,
+  saveConversationIndex
+} from "./conversationIndex";
+import {
+  exportCurrentConversationToHtml,
+  exportCurrentConversationToMarkdown,
+  extractMessageHtmlFromNode,
+  extractMessageMarkdownFromNode
+} from "./conversationExport";
+import {
+  collectConversationTimelineNodes,
+  observeConversationThread,
+  type ConversationTimelineItem,
+  type TimelineRole
+} from "./conversationTimeline";
+import {
+  collectConversationFormulaNodes,
+  extractFormulaFromTarget,
+  type ConversationFormulaItem,
+  type FormulaDisplayMode
+} from "./conversationFormula";
+import {
+  collectConversationMermaidNodes,
+  type ConversationMermaidItem
+} from "./conversationMermaid";
+import { renderMermaidSvg } from "./mermaidRender";
+import {
+  createPromptId,
+  extractPromptVariables,
+  fillPromptVariables,
+  loadPromptLibrary,
+  normalizePromptContent,
+  normalizePromptTags,
+  normalizePromptTitle,
+  savePromptLibrary,
+  type PromptSnippet
+} from "./promptLibrary";
+import {
+  createFormulaFavoriteId,
+  loadFormulaFavorites,
+  saveFormulaFavorites,
+  type FormulaFavorite
+} from "./formulaFavoritesStore";
+import {
+  createDefaultSettings,
+  loadUserSettings,
+  saveUserSettings,
+  type UserSettings
+} from "./settingsStore";
+import {
+  createBackupFileName,
+  createBackupPayload,
+  parseBackupPayload
+} from "./dataBackup";
+
+type PanelState = {
+  collapsed: boolean;
+  width: number;
+};
+
+type ViewKey = "conversations" | "prompts" | "guide" | "settings";
+
+type SelectOption<Value extends string> = {
+  value: Value;
+  label: string;
+};
+
+type BatchUndoSnapshot = {
+  ids: string[];
+  beforeMetaByConversationId: Record<string, ConversationClassificationMeta | undefined>;
+  actionLabel: string;
+  createdAt: number;
+};
+
+type TimelineExportContent = {
+  item: ConversationTimelineItem;
+  content: string;
+};
+
+const PANEL_STORAGE_KEY = "gpt_voyager_panel_state";
+const MIN_WIDTH = 280;
+const MAX_WIDTH = 640;
+const DEFAULT_WIDTH = 360;
+const EXTENSION_HOST_ID = "gpt-voyager-host";
+const EMPTY_META: ConversationClassificationMeta = { tagIds: [] };
+
+async function loadPanelState(): Promise<PanelState> {
+  if (!chrome?.storage?.local) {
+    return { collapsed: false, width: DEFAULT_WIDTH };
+  }
+
+  return new Promise((resolve) => {
+    chrome.storage.local.get(PANEL_STORAGE_KEY, (result) => {
+      const raw = result?.[PANEL_STORAGE_KEY] as Partial<PanelState> | undefined;
+      const width = typeof raw?.width === "number" ? raw.width : DEFAULT_WIDTH;
+      const collapsed = Boolean(raw?.collapsed);
+      resolve({
+        collapsed,
+        width: Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, width))
+      });
+    });
+  });
+}
+
+async function savePanelState(state: PanelState): Promise<void> {
+  if (!chrome?.storage?.local) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    chrome.storage.local.set({ [PANEL_STORAGE_KEY]: state }, () => resolve());
+  });
+}
+
+function getCurrentConversationId(): string {
+  const matched = window.location.pathname.match(/^\/c\/([a-zA-Z0-9-]+)/);
+  return matched?.[1] ?? "";
+}
+
+function formatTime(timestamp: number): string {
+  try {
+    return new Date(timestamp).toLocaleString("zh-CN", {
+      hour12: false,
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  } catch {
+    return "-";
+  }
+}
+
+function openConversation(url: string): void {
+  window.location.href = url;
+}
+
+function timelineRoleLabel(role: TimelineRole): string {
+  if (role === "user") {
+    return "用户";
+  }
+  if (role === "assistant") {
+    return "助手";
+  }
+  if (role === "tool") {
+    return "工具";
+  }
+  return "未知";
+}
+
+function formulaDisplayLabel(mode: FormulaDisplayMode): string {
+  return mode === "display" ? "块级" : "行内";
+}
+
+function normalizeFormulaTexForMatch(tex: string): string {
+  return tex.replace(/\s+/g, " ").trim();
+}
+
+function createFormulaAlias(tex: string): string {
+  const compact = normalizeFormulaTexForMatch(tex);
+  if (!compact) {
+    return "未命名公式";
+  }
+  return compact.length > 24 ? `${compact.slice(0, 24)}…` : compact;
+}
+
+function buildFormulaFavoriteKey(
+  conversationId: string,
+  displayMode: FormulaDisplayMode,
+  tex: string
+): string {
+  return `${conversationId}::${displayMode}::${normalizeFormulaTexForMatch(tex)}`;
+}
+
+function getConversationTitleForExport(): string {
+  const activeLink = document.querySelector<HTMLAnchorElement>('a[href^="/c/"][aria-current="page"]');
+  if (activeLink?.textContent?.trim()) {
+    return activeLink.textContent.trim();
+  }
+  const titleFromDocument = document.title.replace(/\s*-\s*ChatGPT\s*$/i, "").trim();
+  if (titleFromDocument) {
+    return titleFromDocument;
+  }
+  return "未命名会话";
+}
+
+function sanitizeExportFileName(name: string): string {
+  const base = name.replace(/[\\/:*?"<>|]/g, "_").trim();
+  const compact = base.replace(/\s+/g, "_");
+  if (!compact) {
+    return "chatgpt-conversation";
+  }
+  return compact.slice(0, 80);
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildTimelineMarkdown(
+  title: string,
+  url: string,
+  nodes: TimelineExportContent[],
+  query: string,
+  roleFilter: "all" | TimelineRole
+): string {
+  const exportedAt = new Date().toLocaleString("zh-CN", { hour12: false });
+  const filterRoleText = roleFilter === "all" ? "全部角色" : timelineRoleLabel(roleFilter);
+  const filterQueryText = query.trim() || "(空)";
+  const lines: string[] = [];
+  lines.push(`# ${title} - 会话时间线导出`);
+  lines.push("");
+  lines.push(`- 导出时间：${exportedAt}`);
+  lines.push(`- 会话链接：${url}`);
+  lines.push(`- 节点数量：${nodes.length}`);
+  lines.push(`- 角色筛选：${filterRoleText}`);
+  lines.push(`- 关键词筛选：${filterQueryText}`);
+  lines.push("");
+  for (const node of nodes) {
+    lines.push(`## 第 ${node.item.index} 条 · ${timelineRoleLabel(node.item.role)} · ${node.item.charCount} 字`);
+    lines.push("");
+    lines.push(node.content || "(空消息)");
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+function buildTimelineHtml(
+  title: string,
+  url: string,
+  nodes: TimelineExportContent[],
+  query: string,
+  roleFilter: "all" | TimelineRole
+): string {
+  const exportedAt = new Date().toLocaleString("zh-CN", { hour12: false });
+  const filterRoleText = roleFilter === "all" ? "全部角色" : timelineRoleLabel(roleFilter);
+  const filterQueryText = query.trim() || "(空)";
+  const body = nodes
+    .map((node) => {
+      return `
+<section class="timeline-item">
+  <h2>第 ${node.item.index} 条 · ${timelineRoleLabel(node.item.role)} · ${node.item.charCount} 字</h2>
+  <div class="timeline-content">${node.content}</div>
+</section>`;
+    })
+    .join("\n");
+
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)} - 会话时间线导出</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+  <style>
+    body {
+      margin: 0;
+      padding: 28px;
+      color: #111;
+      background: #f7f8fb;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.65;
+    }
+    .container {
+      max-width: 980px;
+      margin: 0 auto;
+      background: #fff;
+      border: 1px solid #e3e8f2;
+      border-radius: 14px;
+      box-shadow: 0 8px 22px rgba(27, 39, 71, 0.08);
+      padding: 24px 26px;
+    }
+    h1 { margin: 0 0 10px; font-size: 28px; line-height: 1.35; }
+    .meta {
+      margin: 0 0 18px;
+      padding-left: 20px;
+      color: #3d4c6a;
+      font-size: 14px;
+    }
+    .timeline-item {
+      border-top: 1px solid #e8edf6;
+      padding-top: 16px;
+      margin-top: 16px;
+    }
+    .timeline-item h2 {
+      margin: 0 0 8px;
+      font-size: 22px;
+      line-height: 1.35;
+    }
+    .timeline-content pre {
+      overflow-x: auto;
+      background: #0e1420;
+      color: #e7ecf9;
+      padding: 10px 12px;
+      border-radius: 8px;
+    }
+    .timeline-content code {
+      font-family: "Consolas", "SFMono-Regular", Menlo, monospace;
+      font-size: 0.95em;
+    }
+    .timeline-content table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 8px 0;
+    }
+    .timeline-content th, .timeline-content td {
+      border: 1px solid #d9e1ef;
+      padding: 6px 8px;
+      text-align: left;
+    }
+    .katex-display {
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 2px 0;
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>${escapeHtml(title)} - 会话时间线导出</h1>
+    <ul class="meta">
+      <li>导出时间：${escapeHtml(exportedAt)}</li>
+      <li>会话链接：<a href="${escapeHtml(url)}">${escapeHtml(url)}</a></li>
+      <li>节点数量：${nodes.length}</li>
+      <li>角色筛选：${escapeHtml(filterRoleText)}</li>
+      <li>关键词筛选：${escapeHtml(filterQueryText)}</li>
+    </ul>
+    ${body}
+  </main>
+</body>
+</html>`;
+}
+
+function upsertConversationMeta(
+  source: Record<string, ConversationClassificationMeta>,
+  conversationId: string,
+  nextMeta: ConversationClassificationMeta
+): Record<string, ConversationClassificationMeta> {
+  const hasFolder = Boolean(nextMeta.folderId);
+  const hasTags = nextMeta.tagIds.length > 0;
+  const hasStar = Boolean(nextMeta.starred);
+  const hasNote = Boolean(nextMeta.note?.trim());
+  if (!hasFolder && !hasTags && !hasStar && !hasNote) {
+    const { [conversationId]: _removed, ...rest } = source;
+    return rest;
+  }
+
+  return {
+    ...source,
+    [conversationId]: {
+      folderId: nextMeta.folderId,
+      tagIds: Array.from(new Set(nextMeta.tagIds)),
+      starred: hasStar,
+      note: hasNote ? nextMeta.note?.trim() : undefined
+    }
+  };
+}
+
+function cloneConversationMeta(meta: ConversationClassificationMeta | undefined): ConversationClassificationMeta | undefined {
+  if (!meta) {
+    return undefined;
+  }
+  return {
+    folderId: meta.folderId,
+    tagIds: [...meta.tagIds],
+    starred: meta.starred,
+    note: meta.note
+  };
+}
+
+function normalizeMetaForCompare(meta: ConversationClassificationMeta | undefined): {
+  folderId: string;
+  tagIds: string[];
+  starred: boolean;
+  note: string;
+} {
+  return {
+    folderId: meta?.folderId ?? "",
+    tagIds: Array.from(new Set(meta?.tagIds ?? [])).sort((a, b) => a.localeCompare(b)),
+    starred: Boolean(meta?.starred),
+    note: meta?.note?.trim() ?? ""
+  };
+}
+
+function isConversationMetaEqual(
+  left: ConversationClassificationMeta | undefined,
+  right: ConversationClassificationMeta | undefined
+): boolean {
+  const normalizedLeft = normalizeMetaForCompare(left);
+  const normalizedRight = normalizeMetaForCompare(right);
+  if (normalizedLeft.folderId !== normalizedRight.folderId) {
+    return false;
+  }
+  if (normalizedLeft.starred !== normalizedRight.starred) {
+    return false;
+  }
+  if (normalizedLeft.note !== normalizedRight.note) {
+    return false;
+  }
+  if (normalizedLeft.tagIds.length !== normalizedRight.tagIds.length) {
+    return false;
+  }
+  return normalizedLeft.tagIds.every((tag, index) => tag === normalizedRight.tagIds[index]);
+}
+
+function getMetaOrEmpty(state: ClassificationState, conversationId: string): ConversationClassificationMeta {
+  return state.metaByConversationId[conversationId] ?? EMPTY_META;
+}
+
+function setTextAreaValue(element: HTMLTextAreaElement, value: string): void {
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value");
+  if (descriptor?.set) {
+    descriptor.set.call(element, value);
+  } else {
+    element.value = value;
+  }
+}
+
+function isVisibleElement(element: HTMLElement): boolean {
+  const style = window.getComputedStyle(element);
+  if (style.display === "none" || style.visibility === "hidden") {
+    return false;
+  }
+  return element.getClientRects().length > 0;
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  if (target.isContentEditable) {
+    return true;
+  }
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || Boolean(target.closest("[contenteditable='true']"));
+}
+
+function findComposerTarget(): HTMLTextAreaElement | HTMLElement | null {
+  const selectors = [
+    "textarea#prompt-textarea",
+    "textarea[data-testid='prompt-textarea']",
+    "div#prompt-textarea[contenteditable='true']",
+    "#prompt-textarea[contenteditable='true']",
+    "main [contenteditable='true'][data-lexical-editor='true']",
+    "main [contenteditable='true'][role='textbox']"
+  ];
+
+  for (const selector of selectors) {
+    const node = document.querySelector<HTMLElement>(selector);
+    if (!node) {
+      continue;
+    }
+    if (!isVisibleElement(node)) {
+      continue;
+    }
+    return node as HTMLTextAreaElement | HTMLElement;
+  }
+
+  return null;
+}
+
+function dispatchComposerInput(element: HTMLElement, inserted: string): void {
+  element.dispatchEvent(
+    new InputEvent("input", {
+      bubbles: true,
+      composed: true,
+      inputType: "insertText",
+      data: inserted
+    })
+  );
+}
+
+function appendToTextarea(textarea: HTMLTextAreaElement, content: string, mode: "append" | "replace"): boolean {
+  if (mode === "replace") {
+    textarea.focus();
+    setTextAreaValue(textarea, content);
+    textarea.setSelectionRange(content.length, content.length);
+    dispatchComposerInput(textarea, content);
+    textarea.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }
+
+  const value = textarea.value ?? "";
+  const start = textarea.selectionStart ?? value.length;
+  const end = textarea.selectionEnd ?? value.length;
+  const prefix = start > 0 && !value.slice(0, start).endsWith("\n") ? "\n" : "";
+  const inserted = `${prefix}${content}`;
+  const next = `${value.slice(0, start)}${inserted}${value.slice(end)}`;
+
+  textarea.focus();
+  setTextAreaValue(textarea, next);
+  const caret = start + inserted.length;
+  textarea.setSelectionRange(caret, caret);
+  dispatchComposerInput(textarea, inserted);
+  textarea.dispatchEvent(new Event("change", { bubbles: true }));
+  return true;
+}
+
+function appendToContentEditable(editable: HTMLElement, content: string, mode: "append" | "replace"): boolean {
+  if (mode === "replace") {
+    editable.focus();
+    editable.textContent = content;
+    dispatchComposerInput(editable, content);
+    return true;
+  }
+
+  const existing = editable.innerText ?? "";
+  const prefix = existing && !existing.endsWith("\n") ? "\n" : "";
+  const inserted = `${prefix}${content}`;
+
+  editable.focus();
+  const selection = window.getSelection();
+  if (selection) {
+    const range = document.createRange();
+    range.selectNodeContents(editable);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  let insertedByCommand = false;
+  if (document.execCommand) {
+    insertedByCommand = document.execCommand("insertText", false, inserted);
+  }
+
+  if (!insertedByCommand) {
+    editable.textContent = `${editable.textContent ?? ""}${inserted}`;
+  }
+
+  dispatchComposerInput(editable, inserted);
+  return true;
+}
+
+function insertPromptToComposer(content: string, mode: "append" | "replace"): boolean {
+  const normalized = normalizePromptContent(content);
+  if (!normalized) {
+    return false;
+  }
+
+  const composer = findComposerTarget();
+  if (!composer) {
+    return false;
+  }
+
+  if (composer instanceof HTMLTextAreaElement) {
+    return appendToTextarea(composer, normalized, mode);
+  }
+
+  if (composer.isContentEditable || composer.getAttribute("contenteditable") === "true") {
+    return appendToContentEditable(composer, normalized, mode);
+  }
+
+  return false;
+}
+
+async function copyPromptText(content: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(content);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type WordMathCopyResult = "ok" | "fallback_tex" | "failed";
+
+function ensureMathmlNamespace(mathml: string): string {
+  const normalized = mathml.trim();
+  if (!normalized) {
+    return "";
+  }
+  if (!/<math[\s>]/i.test(normalized)) {
+    return "";
+  }
+  if (/<math[^>]*\sxmlns=/i.test(normalized)) {
+    return normalized;
+  }
+  return normalized.replace(/<math(\s|>)/i, '<math xmlns="http://www.w3.org/1998/Math/MathML"$1');
+}
+
+function buildWordMathClipboardHtml(mathml: string): string {
+  return `<!doctype html><html><body>${mathml}</body></html>`;
+}
+
+async function copyWordMathSource(mathml: string | undefined, fallbackTex: string): Promise<WordMathCopyResult> {
+  const normalizedMathml = ensureMathmlNamespace(mathml ?? "");
+  if (!normalizedMathml) {
+    const copiedTex = await copyPromptText(fallbackTex);
+    return copiedTex ? "fallback_tex" : "failed";
+  }
+
+  try {
+    if (typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
+      const html = buildWordMathClipboardHtml(normalizedMathml);
+      const item = new ClipboardItem({
+        "text/html": new Blob([html], { type: "text/html" }),
+        "text/plain": new Blob([normalizedMathml], { type: "text/plain" })
+      });
+      await navigator.clipboard.write([item]);
+      return "ok";
+    }
+  } catch {
+    // Fallback to plain text write below.
+  }
+
+  const copiedMathmlText = await copyPromptText(normalizedMathml);
+  return copiedMathmlText ? "ok" : "failed";
+}
+
+function downloadTextFile(fileName: string, content: string, mimeType: string): void {
+  const blob = new Blob([content], { type: mimeType });
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+}
+
+function InlineSelect<Value extends string>(props: {
+  value: Value;
+  options: Array<SelectOption<Value>>;
+  onChange: (value: Value) => void;
+  ariaLabel: string;
+}): React.ReactElement {
+  const { value, options, onChange, ariaLabel } = props;
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = options.find((item) => item.value === value) ?? options[0];
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node)) {
+        return;
+      }
+      if (!rootRef.current?.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onEscape, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onEscape, true);
+    };
+  }, [open]);
+
+  return (
+    <div className="gv-inline-select" ref={rootRef}>
+      <button
+        className={`gv-inline-select-btn ${open ? "gv-inline-select-btn-open" : ""}`}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={ariaLabel}
+        onClick={() => setOpen((previous) => !previous)}
+      >
+        <span>{selected?.label ?? ""}</span>
+        <span className={`gv-inline-select-arrow ${open ? "gv-inline-select-arrow-open" : ""}`} aria-hidden="true">
+          ▾
+        </span>
+      </button>
+      {open ? (
+        <div className="gv-inline-select-menu" role="listbox" aria-label={ariaLabel}>
+          {options.map((item) => (
+            <button
+              key={item.value}
+              className={`gv-inline-select-option ${item.value === value ? "gv-inline-select-option-active" : ""}`}
+              type="button"
+              role="option"
+              aria-selected={item.value === value}
+              onClick={() => {
+                onChange(item.value);
+                setOpen(false);
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function App(): React.ReactElement {
+  const [panelReady, setPanelReady] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [width, setWidth] = useState(DEFAULT_WIDTH);
+  const [activeView, setActiveView] = useState<ViewKey>("conversations");
+
+  const [indexReady, setIndexReady] = useState(false);
+  const [classificationReady, setClassificationReady] = useState(false);
+  const [promptReady, setPromptReady] = useState(false);
+  const [formulaFavoriteReady, setFormulaFavoriteReady] = useState(false);
+  const [settingsReady, setSettingsReady] = useState(false);
+
+  const [query, setQuery] = useState("");
+  const [timelineQuery, setTimelineQuery] = useState("");
+  const [timelineRoleFilter, setTimelineRoleFilter] = useState<"all" | TimelineRole>("all");
+  const [timelineItems, setTimelineItems] = useState<ConversationTimelineItem[]>([]);
+  const [timelineStatus, setTimelineStatus] = useState("");
+  const [timelineActiveId, setTimelineActiveId] = useState("");
+  const [formulaQuery, setFormulaQuery] = useState("");
+  const [formulaDisplayFilter, setFormulaDisplayFilter] = useState<"all" | FormulaDisplayMode>("all");
+  const [formulaItems, setFormulaItems] = useState<ConversationFormulaItem[]>([]);
+  const [formulaStatus, setFormulaStatus] = useState("");
+  const [formulaActiveId, setFormulaActiveId] = useState("");
+  const [formulaCopiedTex, setFormulaCopiedTex] = useState("");
+  const [formulaCopiedFrom, setFormulaCopiedFrom] = useState("");
+  const [formulaFavoriteQuery, setFormulaFavoriteQuery] = useState("");
+  const [mermaidQuery, setMermaidQuery] = useState("");
+  const [mermaidItems, setMermaidItems] = useState<ConversationMermaidItem[]>([]);
+  const [mermaidStatus, setMermaidStatus] = useState("");
+  const [mermaidActiveId, setMermaidActiveId] = useState("");
+  const [mermaidSvgById, setMermaidSvgById] = useState<Record<string, string>>({});
+  const [mermaidErrorById, setMermaidErrorById] = useState<Record<string, string>>({});
+  const [folderDraft, setFolderDraft] = useState("");
+  const [tagDraft, setTagDraft] = useState("");
+  const [folderFilter, setFolderFilter] = useState("all");
+  const [tagFilter, setTagFilter] = useState("all");
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [starredOnly, setStarredOnly] = useState(false);
+  const [selectedConversationIds, setSelectedConversationIds] = useState<string[]>([]);
+  const [batchFolderId, setBatchFolderId] = useState("");
+  const [batchTagId, setBatchTagId] = useState("");
+  const [batchPanelExpanded, setBatchPanelExpanded] = useState(false);
+  const [lastBatchUndo, setLastBatchUndo] = useState<BatchUndoSnapshot | null>(null);
+  const [conversationStatus, setConversationStatus] = useState("");
+  const [visibleCount, setVisibleCount] = useState(0);
+  const [conversationIndex, setConversationIndex] = useState<ConversationEntry[]>([]);
+  const [classificationState, setClassificationState] = useState<ClassificationState>(createEmptyClassificationState());
+
+  const [promptLibrary, setPromptLibrary] = useState<PromptSnippet[]>([]);
+  const [formulaFavorites, setFormulaFavorites] = useState<FormulaFavorite[]>([]);
+  const [promptTitleDraft, setPromptTitleDraft] = useState("");
+  const [promptContentDraft, setPromptContentDraft] = useState("");
+  const [promptTagsDraft, setPromptTagsDraft] = useState("");
+  const [promptQuery, setPromptQuery] = useState("");
+  const [promptTagFilter, setPromptTagFilter] = useState("all");
+  const [promptVariableOpenId, setPromptVariableOpenId] = useState("");
+  const [promptVariableValues, setPromptVariableValues] = useState<Record<string, Record<string, string>>>({});
+  const [editingPromptId, setEditingPromptId] = useState("");
+  const [promptStatus, setPromptStatus] = useState("");
+  const [exportStatus, setExportStatus] = useState("");
+  const [backupStatus, setBackupStatus] = useState("");
+  const [settings, setSettings] = useState<UserSettings>(createDefaultSettings());
+
+  const resizingRef = useRef(false);
+  const backupFileInputRef = useRef<HTMLInputElement>(null);
+  const timelineNodeMapRef = useRef<Record<string, HTMLElement>>({});
+  const formulaNodeMapRef = useRef<Record<string, HTMLElement>>({});
+  const mermaidNodeMapRef = useRef<Record<string, HTMLElement>>({});
+  const activeConversationId = getCurrentConversationId();
+
+  const timelineRoleFilterOptions = useMemo<Array<SelectOption<"all" | TimelineRole>>>(
+    () => [
+      { value: "all", label: "全部角色" },
+      { value: "user", label: "用户" },
+      { value: "assistant", label: "助手" },
+      { value: "tool", label: "工具" },
+      { value: "unknown", label: "未知" }
+    ],
+    []
+  );
+
+  const formulaDisplayFilterOptions = useMemo<Array<SelectOption<"all" | FormulaDisplayMode>>>(
+    () => [
+      { value: "all", label: "全部类型" },
+      { value: "inline", label: "行内公式" },
+      { value: "display", label: "块级公式" }
+    ],
+    []
+  );
+
+  useEffect(() => {
+    let active = true;
+    loadPanelState().then((state) => {
+      if (!active) {
+        return;
+      }
+      setCollapsed(state.collapsed);
+      setWidth(state.width);
+      setPanelReady(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!panelReady) {
+      return;
+    }
+    savePanelState({ collapsed, width }).catch(() => {
+      // Ignore storage errors to avoid breaking UI interaction.
+    });
+  }, [collapsed, panelReady, width]);
+
+  useEffect(() => {
+    let active = true;
+    loadConversationIndex().then((entries) => {
+      if (!active) {
+        return;
+      }
+      setConversationIndex((previous) => mergeConversationIndex(entries, previous));
+      setIndexReady(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    loadClassificationState().then((state) => {
+      if (!active) {
+        return;
+      }
+      setClassificationState(state);
+      setClassificationReady(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    loadPromptLibrary().then((snippets) => {
+      if (!active) {
+        return;
+      }
+      setPromptLibrary(snippets);
+      setPromptReady(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    loadFormulaFavorites().then((items) => {
+      if (!active) {
+        return;
+      }
+      setFormulaFavorites(items);
+      setFormulaFavoriteReady(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    loadUserSettings().then((loaded) => {
+      if (!active) {
+        return;
+      }
+      setSettings(loaded);
+      setSettingsReady(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!settings.autoScanEnabled) {
+      const visibleConversations = collectVisibleConversations(document);
+      setVisibleCount(visibleConversations.length);
+      setConversationIndex((previous) => mergeConversationIndex(previous, visibleConversations));
+      return () => {
+        // No-op cleanup for disabled auto scan mode.
+      };
+    }
+
+    const stopObserve = observeConversationList((visibleConversations) => {
+      setVisibleCount(visibleConversations.length);
+      setConversationIndex((previous) => mergeConversationIndex(previous, visibleConversations));
+    }, {
+      intervalMs: settings.scanIntervalSec * 1000
+    });
+    return () => stopObserve();
+  }, [settings.autoScanEnabled, settings.scanIntervalSec]);
+
+  useEffect(() => {
+    if (!indexReady) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      saveConversationIndex(conversationIndex).catch(() => {
+        // Ignore storage errors and keep runtime state.
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [conversationIndex, indexReady]);
+
+  useEffect(() => {
+    if (!classificationReady) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      saveClassificationState(classificationState).catch(() => {
+        // Ignore storage errors and keep runtime state.
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [classificationReady, classificationState]);
+
+  useEffect(() => {
+    if (!promptReady) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      savePromptLibrary(promptLibrary).catch(() => {
+        // Ignore storage errors and keep runtime state.
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [promptLibrary, promptReady]);
+
+  useEffect(() => {
+    if (!formulaFavoriteReady) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      saveFormulaFavorites(formulaFavorites).catch(() => {
+        // Ignore storage errors and keep runtime state.
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [formulaFavoriteReady, formulaFavorites]);
+
+  useEffect(() => {
+    if (!settingsReady) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      saveUserSettings(settings).catch(() => {
+        // Ignore storage errors and keep runtime state.
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [settings, settingsReady]);
+
+  useEffect(() => {
+    if (conversationIndex.length === 0) {
+      setSelectedConversationIds([]);
+      return;
+    }
+    const validIds = new Set(conversationIndex.map((item) => item.id));
+    setSelectedConversationIds((previous) => previous.filter((id) => validIds.has(id)));
+  }, [conversationIndex]);
+
+  useEffect(() => {
+    if (!promptStatus) {
+      return;
+    }
+    const timer = window.setTimeout(() => setPromptStatus(""), 1600);
+    return () => window.clearTimeout(timer);
+  }, [promptStatus]);
+
+  useEffect(() => {
+    if (!exportStatus) {
+      return;
+    }
+    const timer = window.setTimeout(() => setExportStatus(""), 2000);
+    return () => window.clearTimeout(timer);
+  }, [exportStatus]);
+
+  useEffect(() => {
+    if (!backupStatus) {
+      return;
+    }
+    const timer = window.setTimeout(() => setBackupStatus(""), 2600);
+    return () => window.clearTimeout(timer);
+  }, [backupStatus]);
+
+  useEffect(() => {
+    if (!timelineStatus) {
+      return;
+    }
+    const timer = window.setTimeout(() => setTimelineStatus(""), 2200);
+    return () => window.clearTimeout(timer);
+  }, [timelineStatus]);
+
+  useEffect(() => {
+    if (!formulaStatus) {
+      return;
+    }
+    const timer = window.setTimeout(() => setFormulaStatus(""), 2200);
+    return () => window.clearTimeout(timer);
+  }, [formulaStatus]);
+
+  useEffect(() => {
+    if (!mermaidStatus) {
+      return;
+    }
+    const timer = window.setTimeout(() => setMermaidStatus(""), 2200);
+    return () => window.clearTimeout(timer);
+  }, [mermaidStatus]);
+
+  useEffect(() => {
+    if (!conversationStatus) {
+      return;
+    }
+    const timer = window.setTimeout(() => setConversationStatus(""), 2200);
+    return () => window.clearTimeout(timer);
+  }, [conversationStatus]);
+
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      if (!resizingRef.current) {
+        return;
+      }
+      const nextWidth = window.innerWidth - event.clientX;
+      setWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, nextWidth)));
+    };
+
+    const onPointerUp = () => {
+      resizingRef.current = false;
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+  }, []);
+
+  const startResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    resizingRef.current = true;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "ew-resize";
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, []);
+
+  const refreshVisibleConversations = useCallback(() => {
+    const visibleConversations = collectVisibleConversations(document);
+    setVisibleCount(visibleConversations.length);
+    setConversationIndex((previous) => mergeConversationIndex(previous, visibleConversations));
+  }, []);
+
+  const refreshConversationTimeline = useCallback(() => {
+    if (!activeConversationId) {
+      timelineNodeMapRef.current = {};
+      setTimelineItems([]);
+      return;
+    }
+
+    const nodes = collectConversationTimelineNodes(document);
+    const nodeMap: Record<string, HTMLElement> = {};
+    const items: ConversationTimelineItem[] = [];
+    for (const node of nodes) {
+      nodeMap[node.item.id] = node.element;
+      items.push(node.item);
+    }
+    timelineNodeMapRef.current = nodeMap;
+    setTimelineItems(items);
+  }, [activeConversationId]);
+
+  const refreshConversationFormulas = useCallback(() => {
+    if (!activeConversationId) {
+      formulaNodeMapRef.current = {};
+      setFormulaItems([]);
+      return;
+    }
+
+    const nodes = collectConversationFormulaNodes(document);
+    const nodeMap: Record<string, HTMLElement> = {};
+    const items: ConversationFormulaItem[] = [];
+    for (const node of nodes) {
+      nodeMap[node.item.id] = node.element;
+      items.push(node.item);
+    }
+    formulaNodeMapRef.current = nodeMap;
+    setFormulaItems(items);
+  }, [activeConversationId]);
+
+  const refreshConversationMermaid = useCallback(() => {
+    if (!activeConversationId) {
+      mermaidNodeMapRef.current = {};
+      setMermaidItems([]);
+      setMermaidSvgById({});
+      setMermaidErrorById({});
+      return;
+    }
+
+    const nodes = collectConversationMermaidNodes(document);
+    const nodeMap: Record<string, HTMLElement> = {};
+    const items: ConversationMermaidItem[] = [];
+    for (const node of nodes) {
+      nodeMap[node.item.id] = node.element;
+      items.push(node.item);
+    }
+    mermaidNodeMapRef.current = nodeMap;
+    setMermaidItems(items);
+  }, [activeConversationId]);
+
+  const jumpToTimelineItem = useCallback((timelineId: string) => {
+    const node = timelineNodeMapRef.current[timelineId];
+    if (!node) {
+      setTimelineStatus("未找到消息节点，已尝试重新加载");
+      refreshConversationTimeline();
+      return;
+    }
+
+    setTimelineActiveId(timelineId);
+    node.scrollIntoView({ behavior: "smooth", block: "center" });
+    const previousOutline = node.style.outline;
+    const previousOutlineOffset = node.style.outlineOffset;
+    const previousTransition = node.style.transition;
+    node.style.transition = "outline-color 220ms ease";
+    node.style.outline = "2px solid #10a37f";
+    node.style.outlineOffset = "2px";
+    window.setTimeout(() => {
+      node.style.outline = previousOutline;
+      node.style.outlineOffset = previousOutlineOffset;
+      node.style.transition = previousTransition;
+    }, 850);
+  }, [refreshConversationTimeline]);
+
+  const jumpToFormulaItem = useCallback((formulaId: string) => {
+    const node = formulaNodeMapRef.current[formulaId];
+    if (!node) {
+      setFormulaStatus("未找到公式节点，已尝试重新加载");
+      refreshConversationFormulas();
+      return;
+    }
+
+    setFormulaActiveId(formulaId);
+    node.scrollIntoView({ behavior: "smooth", block: "center" });
+    const previousOutline = node.style.outline;
+    const previousOutlineOffset = node.style.outlineOffset;
+    const previousTransition = node.style.transition;
+    node.style.transition = "outline-color 220ms ease";
+    node.style.outline = "2px solid #10a37f";
+    node.style.outlineOffset = "2px";
+    window.setTimeout(() => {
+      node.style.outline = previousOutline;
+      node.style.outlineOffset = previousOutlineOffset;
+      node.style.transition = previousTransition;
+    }, 850);
+  }, [refreshConversationFormulas]);
+
+  const jumpToMermaidItem = useCallback((mermaidId: string) => {
+    const node = mermaidNodeMapRef.current[mermaidId];
+    if (!node) {
+      setMermaidStatus("未找到图表节点，已尝试重新加载");
+      refreshConversationMermaid();
+      return;
+    }
+
+    setMermaidActiveId(mermaidId);
+    node.scrollIntoView({ behavior: "smooth", block: "center" });
+    const previousOutline = node.style.outline;
+    const previousOutlineOffset = node.style.outlineOffset;
+    const previousTransition = node.style.transition;
+    node.style.transition = "outline-color 220ms ease";
+    node.style.outline = "2px solid #10a37f";
+    node.style.outlineOffset = "2px";
+    window.setTimeout(() => {
+      node.style.outline = previousOutline;
+      node.style.outlineOffset = previousOutlineOffset;
+      node.style.transition = previousTransition;
+    }, 850);
+  }, [refreshConversationMermaid]);
+
+  const notifyFormulaCopied = useCallback((tex: string, from: string) => {
+    setFormulaCopiedTex(tex);
+    setFormulaCopiedFrom(from);
+    setFormulaStatus("已复制 LaTeX");
+  }, []);
+
+  const copyFormulaTex = useCallback(async (tex: string, from: string = "公式工作台") => {
+    const ok = await copyPromptText(tex);
+    if (!ok) {
+      setFormulaStatus("复制失败");
+      return;
+    }
+    notifyFormulaCopied(tex, from);
+  }, [notifyFormulaCopied]);
+
+  const copyFormulaWordSource = useCallback(async (
+    mathml: string | undefined,
+    tex: string,
+    from: string = "公式工作台"
+  ) => {
+    const result = await copyWordMathSource(mathml, tex);
+    if (result === "failed") {
+      setFormulaStatus("复制 Word 公式失败");
+      return;
+    }
+    if (result === "fallback_tex") {
+      notifyFormulaCopied(tex, `${from} · LaTeX 回退`);
+      setFormulaStatus("未提取到 MathML，已回退复制 LaTeX");
+      return;
+    }
+    notifyFormulaCopied(tex, `${from} · Word(MathML)`);
+    setFormulaStatus("已复制 Word 公式（MathML），可直接粘贴到 Word");
+  }, [notifyFormulaCopied]);
+
+  const copyMermaidCode = useCallback(async (code: string) => {
+    const ok = await copyPromptText(code);
+    setMermaidStatus(ok ? "已复制 Mermaid 源码" : "复制 Mermaid 源码失败");
+  }, []);
+
+  const toggleFormulaFavorite = useCallback((item: ConversationFormulaItem) => {
+    if (!activeConversationId) {
+      setFormulaStatus("请先打开会话详情页再收藏公式");
+      return;
+    }
+    const favoriteKey = buildFormulaFavoriteKey(activeConversationId, item.displayMode, item.tex);
+    const existing = formulaFavorites.find((fav) => {
+      return buildFormulaFavoriteKey(fav.sourceConversationId, fav.displayMode, fav.tex) === favoriteKey;
+    });
+    if (existing) {
+      setFormulaFavorites((previous) => previous.filter((fav) => fav.id !== existing.id));
+      setFormulaStatus("已取消收藏公式");
+      return;
+    }
+    const now = Date.now();
+    const nextFavorite: FormulaFavorite = {
+      id: createFormulaFavoriteId(),
+      tex: item.tex,
+      mathml: item.mathml,
+      alias: createFormulaAlias(item.tex),
+      source: item.source,
+      displayMode: item.displayMode,
+      sourceConversationId: activeConversationId,
+      sourceConversationTitle: getConversationTitleForExport(),
+      createdAt: now,
+      updatedAt: now
+    };
+    setFormulaFavorites((previous) => [nextFavorite, ...previous]);
+    setFormulaStatus("已收藏公式");
+  }, [activeConversationId, formulaFavorites]);
+
+  const updateFormulaFavoriteAlias = useCallback((favoriteId: string, alias: string) => {
+    const normalizedAlias = alias.replace(/\s+/g, " ").trim().slice(0, 60);
+    setFormulaFavorites((previous) =>
+      previous.map((item) => {
+        if (item.id !== favoriteId) {
+          return item;
+        }
+        return {
+          ...item,
+          alias: normalizedAlias || createFormulaAlias(item.tex),
+          updatedAt: Date.now()
+        };
+      })
+    );
+  }, []);
+
+  const removeFormulaFavorite = useCallback((favoriteId: string) => {
+    setFormulaFavorites((previous) => previous.filter((item) => item.id !== favoriteId));
+    setFormulaStatus("已删除收藏公式");
+  }, []);
+
+  const locateFormulaFavorite = useCallback((favorite: FormulaFavorite) => {
+    if (favorite.sourceConversationId !== activeConversationId) {
+      const target = conversationIndex.find((item) => item.id === favorite.sourceConversationId);
+      if (target) {
+        openConversation(target.url);
+      } else {
+        openConversation(`${window.location.origin}/c/${favorite.sourceConversationId}`);
+      }
+      return;
+    }
+
+    const normalizedTex = normalizeFormulaTexForMatch(favorite.tex);
+    const matched = formulaItems.find((item) => {
+      return item.displayMode === favorite.displayMode && normalizeFormulaTexForMatch(item.tex) === normalizedTex;
+    });
+    if (!matched) {
+      setFormulaStatus("当前会话未找到该公式，已尝试刷新");
+      refreshConversationFormulas();
+      return;
+    }
+    jumpToFormulaItem(matched.id);
+  }, [activeConversationId, conversationIndex, formulaItems, jumpToFormulaItem, refreshConversationFormulas]);
+
+  const refreshConversationDerivedData = useCallback(() => {
+    refreshConversationTimeline();
+    refreshConversationFormulas();
+    refreshConversationMermaid();
+  }, [refreshConversationFormulas, refreshConversationMermaid, refreshConversationTimeline]);
+
+  useEffect(() => {
+    setTimelineActiveId("");
+    setTimelineQuery("");
+    setTimelineRoleFilter("all");
+    setFormulaActiveId("");
+    setFormulaQuery("");
+    setFormulaDisplayFilter("all");
+    setMermaidActiveId("");
+    setMermaidQuery("");
+    setMermaidSvgById({});
+    setMermaidErrorById({});
+    refreshConversationDerivedData();
+  }, [activeConversationId, refreshConversationDerivedData]);
+
+  useEffect(() => {
+    if (!activeConversationId) {
+      return;
+    }
+    const stopObserve = observeConversationThread(refreshConversationDerivedData, { intervalMs: 1400 });
+    return () => stopObserve();
+  }, [activeConversationId, refreshConversationDerivedData]);
+
+  useEffect(() => {
+    if (mermaidItems.length === 0) {
+      setMermaidSvgById({});
+      setMermaidErrorById({});
+      return;
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      const nextSvgById: Record<string, string> = {};
+      const nextErrorById: Record<string, string> = {};
+      await Promise.all(
+        mermaidItems.map(async (item) => {
+          const rendered = await renderMermaidSvg(item.code);
+          if (cancelled) {
+            return;
+          }
+          if (rendered.ok) {
+            nextSvgById[item.id] = rendered.svg;
+            return;
+          }
+          nextErrorById[item.id] = rendered.reason;
+        })
+      );
+      if (cancelled) {
+        return;
+      }
+      setMermaidSvgById(nextSvgById);
+      setMermaidErrorById(nextErrorById);
+    };
+
+    run().catch(() => {
+      if (!cancelled) {
+        setMermaidStatus("图表渲染失败");
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mermaidItems]);
+
+  const createFolder = useCallback(() => {
+    const name = normalizeName(folderDraft);
+    if (!name || isDuplicateName(classificationState.folders, name)) {
+      return;
+    }
+    const nextFolder = {
+      id: createEntityId("folder"),
+      name,
+      createdAt: Date.now()
+    };
+    setClassificationState((previous) => ({
+      ...previous,
+      folders: [...previous.folders, nextFolder]
+    }));
+    setFolderDraft("");
+  }, [classificationState.folders, folderDraft]);
+
+  const createTag = useCallback(() => {
+    const name = normalizeName(tagDraft);
+    if (!name || isDuplicateName(classificationState.tags, name)) {
+      return;
+    }
+    const nextTag = {
+      id: createEntityId("tag"),
+      name,
+      createdAt: Date.now()
+    };
+    setClassificationState((previous) => ({
+      ...previous,
+      tags: [...previous.tags, nextTag]
+    }));
+    setTagDraft("");
+  }, [classificationState.tags, tagDraft]);
+
+  const removeFolder = useCallback(
+    (folderId: string) => {
+      setClassificationState((previous) => {
+        const nextMetaByConversationId: Record<string, ConversationClassificationMeta> = {};
+
+        for (const [conversationId, meta] of Object.entries(previous.metaByConversationId)) {
+          const nextMeta: ConversationClassificationMeta = {
+            folderId: meta.folderId === folderId ? undefined : meta.folderId,
+            tagIds: [...meta.tagIds],
+            starred: meta.starred,
+            note: meta.note
+          };
+
+          if (nextMeta.folderId || nextMeta.tagIds.length > 0 || nextMeta.starred || nextMeta.note) {
+            nextMetaByConversationId[conversationId] = nextMeta;
+          }
+        }
+
+        return {
+          ...previous,
+          folders: previous.folders.filter((item) => item.id !== folderId),
+          metaByConversationId: nextMetaByConversationId
+        };
+      });
+
+      if (folderFilter === folderId) {
+        setFolderFilter("all");
+      }
+    },
+    [folderFilter]
+  );
+
+  const removeTag = useCallback(
+    (tagId: string) => {
+      setClassificationState((previous) => {
+        const nextMetaByConversationId: Record<string, ConversationClassificationMeta> = {};
+
+        for (const [conversationId, meta] of Object.entries(previous.metaByConversationId)) {
+          const nextMeta: ConversationClassificationMeta = {
+            folderId: meta.folderId,
+            tagIds: meta.tagIds.filter((item) => item !== tagId),
+            starred: meta.starred,
+            note: meta.note
+          };
+
+          if (nextMeta.folderId || nextMeta.tagIds.length > 0 || nextMeta.starred || nextMeta.note) {
+            nextMetaByConversationId[conversationId] = nextMeta;
+          }
+        }
+
+        return {
+          ...previous,
+          tags: previous.tags.filter((item) => item.id !== tagId),
+          metaByConversationId: nextMetaByConversationId
+        };
+      });
+
+      if (tagFilter === tagId) {
+        setTagFilter("all");
+      }
+    },
+    [tagFilter]
+  );
+
+  const setConversationFolder = useCallback((conversationId: string, folderId: string) => {
+    setClassificationState((previous) => {
+      const current = getMetaOrEmpty(previous, conversationId);
+      const nextMeta: ConversationClassificationMeta = {
+        folderId: folderId || undefined,
+        tagIds: [...current.tagIds],
+        starred: current.starred,
+        note: current.note
+      };
+      return {
+        ...previous,
+        metaByConversationId: upsertConversationMeta(previous.metaByConversationId, conversationId, nextMeta)
+      };
+    });
+  }, []);
+
+  const toggleConversationTag = useCallback((conversationId: string, tagId: string) => {
+    setClassificationState((previous) => {
+      const current = getMetaOrEmpty(previous, conversationId);
+      const hasTag = current.tagIds.includes(tagId);
+      const nextTagIds = hasTag ? current.tagIds.filter((item) => item !== tagId) : [...current.tagIds, tagId];
+      const nextMeta: ConversationClassificationMeta = {
+        folderId: current.folderId,
+        tagIds: nextTagIds,
+        starred: current.starred,
+        note: current.note
+      };
+      return {
+        ...previous,
+        metaByConversationId: upsertConversationMeta(previous.metaByConversationId, conversationId, nextMeta)
+      };
+    });
+  }, []);
+
+  const toggleConversationStar = useCallback((conversationId: string) => {
+    setClassificationState((previous) => {
+      const current = getMetaOrEmpty(previous, conversationId);
+      const nextMeta: ConversationClassificationMeta = {
+        folderId: current.folderId,
+        tagIds: [...current.tagIds],
+        starred: !current.starred,
+        note: current.note
+      };
+      return {
+        ...previous,
+        metaByConversationId: upsertConversationMeta(previous.metaByConversationId, conversationId, nextMeta)
+      };
+    });
+  }, []);
+
+  const setConversationNote = useCallback((conversationId: string, note: string) => {
+    const normalized = note.replace(/\s+/g, " ").trim().slice(0, 240);
+    setClassificationState((previous) => {
+      const current = getMetaOrEmpty(previous, conversationId);
+      const nextMeta: ConversationClassificationMeta = {
+        folderId: current.folderId,
+        tagIds: [...current.tagIds],
+        starred: current.starred,
+        note: normalized || undefined
+      };
+      return {
+        ...previous,
+        metaByConversationId: upsertConversationMeta(previous.metaByConversationId, conversationId, nextMeta)
+      };
+    });
+  }, []);
+
+  const openConversationFolder = useCallback((folderId?: string) => {
+    setStarredOnly(false);
+    setTagFilter("all");
+    setShowAdvancedFilters(false);
+    setQuery("");
+    if (!folderId) {
+      setFolderFilter("uncategorized");
+      setConversationStatus("已打开未分类会话");
+      return;
+    }
+    setFolderFilter(folderId);
+    setConversationStatus("已打开对应文件夹会话");
+  }, []);
+
+  const savePrompt = useCallback(() => {
+    const title = normalizePromptTitle(promptTitleDraft);
+    const content = normalizePromptContent(promptContentDraft);
+    const tags = normalizePromptTags(promptTagsDraft);
+    if (!title || !content) {
+      return;
+    }
+
+    const now = Date.now();
+    if (editingPromptId) {
+      setPromptLibrary((previous) => {
+        const updated = previous.map((item) => {
+          if (item.id !== editingPromptId) {
+            return item;
+          }
+          return {
+            ...item,
+            title,
+            content,
+            tags,
+            updatedAt: now
+          };
+        });
+        return updated.sort((a, b) => b.updatedAt - a.updatedAt);
+      });
+      setPromptStatus("已更新");
+    } else {
+      const snippet: PromptSnippet = {
+        id: createPromptId(),
+        title,
+        content,
+        tags,
+        createdAt: now,
+        updatedAt: now
+      };
+      setPromptLibrary((previous) => [snippet, ...previous]);
+      setPromptStatus("已添加");
+    }
+
+    setPromptTitleDraft("");
+    setPromptContentDraft("");
+    setPromptTagsDraft("");
+    setEditingPromptId("");
+    setPromptVariableOpenId("");
+  }, [editingPromptId, promptContentDraft, promptTagsDraft, promptTitleDraft]);
+
+  const editPrompt = useCallback((snippet: PromptSnippet) => {
+    setEditingPromptId(snippet.id);
+    setPromptTitleDraft(snippet.title);
+    setPromptContentDraft(snippet.content);
+    setPromptTagsDraft(snippet.tags.join(", "));
+  }, []);
+
+  const deletePrompt = useCallback((snippetId: string) => {
+    setPromptLibrary((previous) => previous.filter((item) => item.id !== snippetId));
+    if (editingPromptId === snippetId) {
+      setEditingPromptId("");
+      setPromptTitleDraft("");
+      setPromptContentDraft("");
+      setPromptTagsDraft("");
+    }
+    setPromptVariableValues((previous) => {
+      const { [snippetId]: _removed, ...rest } = previous;
+      return rest;
+    });
+    if (promptVariableOpenId === snippetId) {
+      setPromptVariableOpenId("");
+    }
+    setPromptStatus("已删除");
+  }, [editingPromptId, promptVariableOpenId]);
+
+  const copyPrompt = useCallback(async (content: string) => {
+    const ok = await copyPromptText(content);
+    setPromptStatus(ok ? "已复制" : "复制失败");
+  }, []);
+
+  const insertPrompt = useCallback((content: string) => {
+    const ok = insertPromptToComposer(content, settings.promptInsertMode);
+    setPromptStatus(ok ? "已插入输入框" : "未找到输入框");
+  }, [settings.promptInsertMode]);
+
+  const setPromptVariableValue = useCallback((promptId: string, variable: string, value: string) => {
+    setPromptVariableValues((previous) => ({
+      ...previous,
+      [promptId]: {
+        ...(previous[promptId] ?? {}),
+        [variable]: value
+      }
+    }));
+  }, []);
+
+  const insertPromptWithVariables = useCallback((snippet: PromptSnippet) => {
+    const variables = extractPromptVariables(snippet.content);
+    if (variables.length === 0) {
+      insertPrompt(snippet.content);
+      return;
+    }
+
+    const values = promptVariableValues[snippet.id] ?? {};
+    const unresolved = variables.filter((name) => !(values[name] ?? "").trim());
+    if (unresolved.length > 0) {
+      setPromptStatus(`仍有 ${unresolved.length} 个变量未填写`);
+      setPromptVariableOpenId(snippet.id);
+      return;
+    }
+    const filled = fillPromptVariables(snippet.content, values);
+    insertPrompt(filled);
+  }, [insertPrompt, promptVariableValues]);
+
+  const exportConversationMarkdown = useCallback(() => {
+    const result = exportCurrentConversationToMarkdown();
+    if (!result.ok) {
+      setExportStatus(result.reason);
+      return;
+    }
+    setExportStatus(`Markdown 已导出（${result.messageCount} 条）`);
+  }, []);
+
+  const exportConversationHtml = useCallback(() => {
+    const result = exportCurrentConversationToHtml();
+    if (!result.ok) {
+      setExportStatus(result.reason);
+      return;
+    }
+    setExportStatus(`HTML 已导出（${result.messageCount} 条）`);
+  }, []);
+
+  const exportConversationDefault = useCallback(() => {
+    if (settings.defaultExportFormat === "html") {
+      exportConversationHtml();
+      return;
+    }
+    exportConversationMarkdown();
+  }, [exportConversationHtml, exportConversationMarkdown, settings.defaultExportFormat]);
+
+  const exportJsonBackup = useCallback(() => {
+    const payload = createBackupPayload({
+      conversationIndex,
+      classificationState,
+      promptLibrary,
+      formulaFavorites,
+      settings
+    });
+    const content = JSON.stringify(payload, null, 2);
+    downloadTextFile(createBackupFileName(), content, "application/json;charset=utf-8");
+    setBackupStatus(
+      `备份已导出（会话 ${payload.data.conversationIndex.length}，提示词 ${payload.data.promptLibrary.length}，公式收藏 ${payload.data.formulaFavorites.length}）`
+    );
+  }, [classificationState, conversationIndex, formulaFavorites, promptLibrary, settings]);
+
+  const openImportBackupPicker = useCallback(() => {
+    backupFileInputRef.current?.click();
+  }, []);
+
+  const importJsonBackup = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+
+    if (!(indexReady && classificationReady && promptReady && formulaFavoriteReady && settingsReady)) {
+      setBackupStatus("数据尚未初始化完成，请稍后再导入");
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const parsed = parseBackupPayload(text);
+      if (!parsed.ok) {
+        setBackupStatus(parsed.reason);
+        return;
+      }
+
+      const nextConversationIndex = parsed.payload.data.conversationIndex;
+      const nextClassificationState = parsed.payload.data.classificationState;
+      const nextPromptLibrary = parsed.payload.data.promptLibrary;
+      const nextFormulaFavorites = parsed.payload.data.formulaFavorites;
+      const nextSettings = parsed.payload.data.settings;
+
+      setConversationIndex(nextConversationIndex);
+      setClassificationState(nextClassificationState);
+      setPromptLibrary(nextPromptLibrary);
+      setFormulaFavorites(nextFormulaFavorites);
+      setSettings(nextSettings);
+      setFolderFilter("all");
+      setTagFilter("all");
+      setPromptTagFilter("all");
+      setPromptQuery("");
+      setFormulaFavoriteQuery("");
+      setSelectedConversationIds([]);
+      setBatchFolderId("");
+      setBatchTagId("");
+      setShowAdvancedFilters(false);
+      setBatchPanelExpanded(false);
+      setLastBatchUndo(null);
+
+      await Promise.all([
+        saveConversationIndex(nextConversationIndex),
+        saveClassificationState(nextClassificationState),
+        savePromptLibrary(nextPromptLibrary),
+        saveFormulaFavorites(nextFormulaFavorites),
+        saveUserSettings(nextSettings)
+      ]);
+
+      setBackupStatus(
+        `备份已导入（会话 ${nextConversationIndex.length}，提示词 ${nextPromptLibrary.length}，公式收藏 ${nextFormulaFavorites.length}）`
+      );
+    } catch {
+      setBackupStatus("导入失败：读取文件时发生错误");
+    }
+  }, [classificationReady, formulaFavoriteReady, indexReady, promptReady, settingsReady]);
+
+  useEffect(() => {
+    if (!settings.formulaClickCopyEnabled) {
+      return;
+    }
+
+    const onDocumentClick = (event: MouseEvent) => {
+      const host = document.getElementById(EXTENSION_HOST_ID);
+      if (host && event.target instanceof Node && host.contains(event.target)) {
+        return;
+      }
+
+      const extracted = extractFormulaFromTarget(event.target);
+      if (!extracted) {
+        return;
+      }
+
+      copyFormulaTex(extracted.tex, `页面点击 · ${formulaDisplayLabel(extracted.displayMode)}`);
+
+      const node = extracted.element;
+      const previousOutline = node.style.outline;
+      const previousOutlineOffset = node.style.outlineOffset;
+      const previousTransition = node.style.transition;
+      node.style.transition = "outline-color 200ms ease";
+      node.style.outline = "2px solid #10a37f";
+      node.style.outlineOffset = "2px";
+      window.setTimeout(() => {
+        node.style.outline = previousOutline;
+        node.style.outlineOffset = previousOutlineOffset;
+        node.style.transition = previousTransition;
+      }, 680);
+    };
+
+    document.addEventListener("click", onDocumentClick, true);
+    return () => document.removeEventListener("click", onDocumentClick, true);
+  }, [copyFormulaTex, settings.formulaClickCopyEnabled]);
+
+  const panelStyle = useMemo<React.CSSProperties>(
+    () => ({
+      width: collapsed ? 0 : width
+    }),
+    [collapsed, width]
+  );
+
+  const normalizedQuery = query.trim().toLowerCase();
+
+  const starredCount = useMemo(() => {
+    return Object.values(classificationState.metaByConversationId).filter((meta) => Boolean(meta.starred)).length;
+  }, [classificationState.metaByConversationId]);
+
+  const starredConversations = useMemo(() => {
+    return conversationIndex.filter((item) => {
+      const meta = classificationState.metaByConversationId[item.id] ?? EMPTY_META;
+      return Boolean(meta.starred);
+    });
+  }, [classificationState.metaByConversationId, conversationIndex]);
+
+  const folderConversationCountMap = useMemo(() => {
+    const counter = new Map<string, number>();
+    for (const item of conversationIndex) {
+      const meta = classificationState.metaByConversationId[item.id] ?? EMPTY_META;
+      const folderId = meta.folderId;
+      if (!folderId) {
+        continue;
+      }
+      counter.set(folderId, (counter.get(folderId) ?? 0) + 1);
+    }
+    return counter;
+  }, [classificationState.metaByConversationId, conversationIndex]);
+
+  const uncategorizedConversationCount = useMemo(() => {
+    let count = 0;
+    for (const item of conversationIndex) {
+      const meta = classificationState.metaByConversationId[item.id] ?? EMPTY_META;
+      if (!meta.folderId) {
+        count += 1;
+      }
+    }
+    return count;
+  }, [classificationState.metaByConversationId, conversationIndex]);
+
+  const filteredConversations = useMemo(() => {
+    return conversationIndex.filter((item) => {
+      const meta = classificationState.metaByConversationId[item.id] ?? EMPTY_META;
+      const noteText = meta.note?.toLowerCase() ?? "";
+      const queryMatched =
+        !normalizedQuery ||
+        item.title.toLowerCase().includes(normalizedQuery) ||
+        item.id.toLowerCase().includes(normalizedQuery) ||
+        noteText.includes(normalizedQuery);
+      if (!queryMatched) {
+        return false;
+      }
+
+      if (folderFilter === "uncategorized") {
+        if (meta.folderId) {
+          return false;
+        }
+      } else if (folderFilter !== "all" && (meta.folderId ?? "") !== folderFilter) {
+        return false;
+      }
+
+      if (tagFilter !== "all" && !meta.tagIds.includes(tagFilter)) {
+        return false;
+      }
+
+      if (starredOnly && !meta.starred) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [classificationState.metaByConversationId, conversationIndex, folderFilter, normalizedQuery, starredOnly, tagFilter]);
+
+  const activateStarredOnly = useCallback(() => {
+    setFolderFilter("all");
+    setTagFilter("all");
+    setStarredOnly(true);
+    setShowAdvancedFilters(false);
+  }, []);
+
+  const openFolderView = useCallback((target: "all" | "uncategorized" | string) => {
+    setStarredOnly(false);
+    setTagFilter("all");
+    setShowAdvancedFilters(false);
+    setQuery("");
+    if (target === "all") {
+      setFolderFilter("all");
+      setConversationStatus("已打开全部会话");
+      return;
+    }
+    if (target === "uncategorized") {
+      setFolderFilter("uncategorized");
+      setConversationStatus("已打开未分类会话");
+      return;
+    }
+    setFolderFilter(target);
+    setConversationStatus("已打开对应文件夹会话");
+  }, []);
+
+  const selectedConversationIdSet = useMemo(() => new Set(selectedConversationIds), [selectedConversationIds]);
+  const selectedConversationCount = selectedConversationIds.length;
+
+  useEffect(() => {
+    if (selectedConversationCount > 0) {
+      setBatchPanelExpanded(true);
+    }
+  }, [selectedConversationCount]);
+
+  const toggleConversationSelection = useCallback((conversationId: string) => {
+    setSelectedConversationIds((previous) => {
+      if (previous.includes(conversationId)) {
+        return previous.filter((id) => id !== conversationId);
+      }
+      return [...previous, conversationId];
+    });
+  }, []);
+
+  const selectAllFilteredConversations = useCallback(() => {
+    setSelectedConversationIds(filteredConversations.map((item) => item.id));
+    setBatchPanelExpanded(true);
+    setConversationStatus(`已选择当前筛选的 ${filteredConversations.length} 条会话`);
+  }, [filteredConversations]);
+
+  const clearConversationSelection = useCallback(() => {
+    setSelectedConversationIds([]);
+    setBatchPanelExpanded(false);
+    setConversationStatus("已清空选择");
+  }, []);
+
+  const applyBatchMetaUpdate = useCallback(
+    (
+      actionLabel: string,
+      updateMeta: (current: ConversationClassificationMeta, conversationId: string) => ConversationClassificationMeta
+    ) => {
+      if (selectedConversationIds.length === 0) {
+        setConversationStatus("请先选择会话");
+        return;
+      }
+
+      const currentMetaByConversationId = classificationState.metaByConversationId;
+      const nextMetaByConversationId: Record<string, ConversationClassificationMeta> = {};
+      const beforeMetaByConversationId: Record<string, ConversationClassificationMeta | undefined> = {};
+      const changedIds: string[] = [];
+
+      for (const conversationId of selectedConversationIds) {
+        const currentMeta = currentMetaByConversationId[conversationId];
+        const nextMeta = updateMeta(currentMeta ?? EMPTY_META, conversationId);
+        if (isConversationMetaEqual(currentMeta, nextMeta)) {
+          continue;
+        }
+        changedIds.push(conversationId);
+        beforeMetaByConversationId[conversationId] = cloneConversationMeta(currentMeta);
+        nextMetaByConversationId[conversationId] = nextMeta;
+      }
+
+      if (changedIds.length === 0) {
+        setConversationStatus("没有可更新的会话");
+        return;
+      }
+
+      setClassificationState((previous) => {
+        let working = previous.metaByConversationId;
+        for (const conversationId of changedIds) {
+          working = upsertConversationMeta(working, conversationId, nextMetaByConversationId[conversationId]);
+        }
+        return {
+          ...previous,
+          metaByConversationId: working
+        };
+      });
+
+      setLastBatchUndo({
+        ids: changedIds,
+        beforeMetaByConversationId,
+        actionLabel,
+        createdAt: Date.now()
+      });
+      setConversationStatus(`${actionLabel}（${changedIds.length} 条）`);
+    },
+    [classificationState.metaByConversationId, selectedConversationIds]
+  );
+
+  const applyBatchFolder = useCallback(() => {
+    const actionLabel = batchFolderId ? "已批量设置文件夹" : "已批量设为未分类";
+    applyBatchMetaUpdate(actionLabel, (current) => ({
+      folderId: batchFolderId || undefined,
+      tagIds: [...current.tagIds],
+      starred: current.starred,
+      note: current.note
+    }));
+  }, [applyBatchMetaUpdate, batchFolderId]);
+
+  const applyBatchAddTag = useCallback(() => {
+    if (!batchTagId) {
+      setConversationStatus("请先选择标签");
+      return;
+    }
+    applyBatchMetaUpdate("已批量添加标签", (current) => ({
+      folderId: current.folderId,
+      tagIds: Array.from(new Set([...current.tagIds, batchTagId])),
+      starred: current.starred,
+      note: current.note
+    }));
+  }, [applyBatchMetaUpdate, batchTagId]);
+
+  const applyBatchRemoveTag = useCallback(() => {
+    if (!batchTagId) {
+      setConversationStatus("请先选择标签");
+      return;
+    }
+    applyBatchMetaUpdate("已批量移除标签", (current) => ({
+      folderId: current.folderId,
+      tagIds: current.tagIds.filter((id) => id !== batchTagId),
+      starred: current.starred,
+      note: current.note
+    }));
+  }, [applyBatchMetaUpdate, batchTagId]);
+
+  const undoLastBatchOperation = useCallback(() => {
+    if (!lastBatchUndo) {
+      setConversationStatus("没有可撤销的批量操作");
+      return;
+    }
+
+    setClassificationState((previous) => {
+      let working = previous.metaByConversationId;
+      for (const conversationId of lastBatchUndo.ids) {
+        const beforeMeta = lastBatchUndo.beforeMetaByConversationId[conversationId];
+        if (beforeMeta) {
+          working = upsertConversationMeta(working, conversationId, beforeMeta);
+          continue;
+        }
+        const { [conversationId]: _removed, ...rest } = working;
+        working = rest;
+      }
+      return {
+        ...previous,
+        metaByConversationId: working
+      };
+    });
+
+    setConversationStatus(`已撤销：${lastBatchUndo.actionLabel}（${lastBatchUndo.ids.length} 条）`);
+    setLastBatchUndo(null);
+  }, [lastBatchUndo]);
+
+  useEffect(() => {
+    if (!settings.enableShortcuts) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      const withModifier = event.ctrlKey || event.metaKey;
+      if (!withModifier || !event.shiftKey || event.altKey) {
+        return;
+      }
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (key === "k") {
+        event.preventDefault();
+        setCollapsed((previous) => !previous);
+        return;
+      }
+
+      if (key === "r") {
+        event.preventDefault();
+        refreshVisibleConversations();
+        setExportStatus("已重新扫描（快捷键）");
+        return;
+      }
+
+      if (key === "e") {
+        event.preventDefault();
+        exportConversationDefault();
+        return;
+      }
+
+      if (key === "b") {
+        event.preventDefault();
+        setActiveView("conversations");
+        selectAllFilteredConversations();
+        return;
+      }
+
+      if (key === "n") {
+        event.preventDefault();
+        setActiveView("conversations");
+        clearConversationSelection();
+        return;
+      }
+
+      if (key === "z") {
+        event.preventDefault();
+        setActiveView("conversations");
+        undoLastBatchOperation();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [
+    clearConversationSelection,
+    exportConversationDefault,
+    refreshVisibleConversations,
+    selectAllFilteredConversations,
+    settings.enableShortcuts,
+    undoLastBatchOperation
+  ]);
+
+  const normalizedPromptQuery = promptQuery.trim().toLowerCase();
+
+  const promptTagOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const snippet of promptLibrary) {
+      for (const tag of snippet.tags) {
+        set.add(tag);
+      }
+    }
+    return Array.from(set.values()).sort((a, b) => a.localeCompare(b, "zh-CN"));
+  }, [promptLibrary]);
+
+  const filteredPromptLibrary = useMemo(() => {
+    return promptLibrary.filter((snippet) => {
+      if (promptTagFilter !== "all" && !snippet.tags.includes(promptTagFilter)) {
+        return false;
+      }
+      if (!normalizedPromptQuery) {
+        return true;
+      }
+      const tagsText = snippet.tags.join(" ").toLowerCase();
+      return (
+        snippet.title.toLowerCase().includes(normalizedPromptQuery) ||
+        snippet.content.toLowerCase().includes(normalizedPromptQuery) ||
+        tagsText.includes(normalizedPromptQuery)
+      );
+    });
+  }, [normalizedPromptQuery, promptLibrary, promptTagFilter]);
+
+  const normalizedTimelineQuery = timelineQuery.trim().toLowerCase();
+
+  const filteredTimelineItems = useMemo(() => {
+    return timelineItems.filter((item) => {
+      if (timelineRoleFilter !== "all" && item.role !== timelineRoleFilter) {
+        return false;
+      }
+      if (!normalizedTimelineQuery) {
+        return true;
+      }
+      return (
+        item.preview.toLowerCase().includes(normalizedTimelineQuery) ||
+        timelineRoleLabel(item.role).toLowerCase().includes(normalizedTimelineQuery)
+      );
+    });
+  }, [normalizedTimelineQuery, timelineItems, timelineRoleFilter]);
+
+  const exportTimelineByNodes = useCallback((format: "markdown" | "html") => {
+    if (!activeConversationId) {
+      setTimelineStatus("请先打开会话详情页再导出时间线");
+      return;
+    }
+    if (filteredTimelineItems.length === 0) {
+      setTimelineStatus("当前筛选条件下没有可导出的时间线节点");
+      return;
+    }
+
+    const nodes: TimelineExportContent[] = [];
+    for (const item of filteredTimelineItems) {
+      const element = timelineNodeMapRef.current[item.id];
+      if (!element) {
+        continue;
+      }
+      const content =
+        format === "html"
+          ? extractMessageHtmlFromNode(element)
+          : extractMessageMarkdownFromNode(element);
+      if (!content.trim()) {
+        continue;
+      }
+      nodes.push({
+        item,
+        content
+      });
+    }
+
+    if (nodes.length === 0) {
+      setTimelineStatus("未提取到可导出的时间线内容，请先刷新时间线");
+      return;
+    }
+
+    const title = getConversationTitleForExport();
+    const url = `${window.location.origin}${window.location.pathname}`;
+    const content =
+      format === "html"
+        ? buildTimelineHtml(title, url, nodes, timelineQuery, timelineRoleFilter)
+        : buildTimelineMarkdown(title, url, nodes, timelineQuery, timelineRoleFilter);
+    const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15);
+    const extension = format === "html" ? "html" : "md";
+    const mimeType = format === "html" ? "text/html;charset=utf-8" : "text/markdown;charset=utf-8";
+    const fileName = `${sanitizeExportFileName(title)}_timeline_${stamp}.${extension}`;
+    downloadTextFile(fileName, content, mimeType);
+    setTimelineStatus(`时间线 ${format === "html" ? "HTML" : "Markdown"} 已导出（${nodes.length} 条）`);
+  }, [activeConversationId, filteredTimelineItems, timelineQuery, timelineRoleFilter]);
+
+  const exportTimelineByDefault = useCallback(() => {
+    if (settings.defaultExportFormat === "html") {
+      exportTimelineByNodes("html");
+      return;
+    }
+    exportTimelineByNodes("markdown");
+  }, [exportTimelineByNodes, settings.defaultExportFormat]);
+
+  const normalizedFormulaQuery = formulaQuery.trim().toLowerCase();
+
+  const formulaFavoriteByKey = useMemo(() => {
+    const map = new Map<string, FormulaFavorite>();
+    for (const item of formulaFavorites) {
+      map.set(buildFormulaFavoriteKey(item.sourceConversationId, item.displayMode, item.tex), item);
+    }
+    return map;
+  }, [formulaFavorites]);
+
+  const filteredFormulaItems = useMemo(() => {
+    return formulaItems.filter((item) => {
+      if (formulaDisplayFilter !== "all" && item.displayMode !== formulaDisplayFilter) {
+        return false;
+      }
+      if (!normalizedFormulaQuery) {
+        return true;
+      }
+      return (
+        item.tex.toLowerCase().includes(normalizedFormulaQuery) ||
+        formulaDisplayLabel(item.displayMode).toLowerCase().includes(normalizedFormulaQuery)
+      );
+    });
+  }, [formulaDisplayFilter, formulaItems, normalizedFormulaQuery]);
+
+  const normalizedFormulaFavoriteQuery = formulaFavoriteQuery.trim().toLowerCase();
+
+  const filteredFormulaFavorites = useMemo(() => {
+    return formulaFavorites.filter((item) => {
+      if (!normalizedFormulaFavoriteQuery) {
+        return true;
+      }
+      return (
+        item.alias.toLowerCase().includes(normalizedFormulaFavoriteQuery) ||
+        item.tex.toLowerCase().includes(normalizedFormulaFavoriteQuery) ||
+        item.sourceConversationTitle.toLowerCase().includes(normalizedFormulaFavoriteQuery)
+      );
+    });
+  }, [formulaFavorites, normalizedFormulaFavoriteQuery]);
+
+  const normalizedMermaidQuery = mermaidQuery.trim().toLowerCase();
+
+  const filteredMermaidItems = useMemo(() => {
+    return mermaidItems.filter((item) => {
+      if (!normalizedMermaidQuery) {
+        return true;
+      }
+      return (
+        item.preview.toLowerCase().includes(normalizedMermaidQuery) ||
+        item.code.toLowerCase().includes(normalizedMermaidQuery)
+      );
+    });
+  }, [mermaidItems, normalizedMermaidQuery]);
+
+  return (
+    <div className="gv-root">
+      <button
+        className={`gv-toggle ${collapsed ? "gv-visible" : ""}`}
+        type="button"
+        onClick={() => setCollapsed(false)}
+        aria-label="展开 GPT Voyager 侧边栏"
+      >
+        GPT Voyager
+      </button>
+
+      <aside className={`gv-panel ${collapsed ? "gv-collapsed" : ""}`} style={panelStyle}>
+        <div className="gv-resize" onPointerDown={startResize} />
+        <div className="gv-panel-inner">
+          <header className="gv-header">
+            <div>
+              <h1>GPT Voyager</h1>
+              <p>Workspace for ChatGPT</p>
+            </div>
+            <button
+              className="gv-text-btn"
+              type="button"
+              onClick={() => setCollapsed(true)}
+              aria-label="收起侧边栏"
+            >
+              收起
+            </button>
+          </header>
+
+          <nav className="gv-nav" aria-label="功能分区">
+            <button
+              className={`gv-nav-btn ${activeView === "conversations" ? "gv-nav-btn-active" : ""}`}
+              type="button"
+              onClick={() => setActiveView("conversations")}
+            >
+              会话工作台
+            </button>
+            <button
+              className={`gv-nav-btn ${activeView === "prompts" ? "gv-nav-btn-active" : ""}`}
+              type="button"
+              onClick={() => setActiveView("prompts")}
+            >
+              提示词库
+            </button>
+            <button
+              className={`gv-nav-btn ${activeView === "guide" ? "gv-nav-btn-active" : ""}`}
+              type="button"
+              onClick={() => setActiveView("guide")}
+            >
+              使用说明
+            </button>
+            <button
+              className={`gv-nav-btn ${activeView === "settings" ? "gv-nav-btn-active" : ""}`}
+              type="button"
+              onClick={() => setActiveView("settings")}
+            >
+              设置中心
+            </button>
+          </nav>
+
+          {activeView === "conversations" ? (
+            <>
+          <section className="gv-section gv-section-highlight">
+            <div className="gv-stat-grid">
+              <div className="gv-stat-item">
+                <span>当前可见</span>
+                <strong>{visibleCount}</strong>
+              </div>
+              <div className="gv-stat-item">
+                <span>已索引</span>
+                <strong>{conversationIndex.length}</strong>
+              </div>
+              <div className="gv-stat-item">
+                <span>文件夹</span>
+                <strong>{classificationState.folders.length}</strong>
+              </div>
+              <div className="gv-stat-item">
+                <span>标签</span>
+                <strong>{classificationState.tags.length}</strong>
+              </div>
+            </div>
+            <button
+              className={`gv-stat-cta ${starredOnly ? "gv-stat-cta-active" : ""}`}
+              type="button"
+              onClick={() => {
+                if (starredOnly) {
+                  setStarredOnly(false);
+                  return;
+                }
+                activateStarredOnly();
+              }}
+              aria-label={starredOnly ? "退出仅星标视图" : "进入仅星标视图"}
+            >
+              <span>星标会话 {starredCount} 条</span>
+              <span>{starredOnly ? "退出仅星标" : "查看星标"}</span>
+            </button>
+          </section>
+
+          <section className="gv-section">
+            <div className="gv-section-title-row">
+              <h2>星标会话</h2>
+              <div className="gv-actions-inline">
+                <button
+                  className={`gv-mini-btn ${starredOnly ? "gv-mini-btn-active" : ""}`}
+                  type="button"
+                  onClick={() => {
+                    if (starredOnly) {
+                      setStarredOnly(false);
+                      return;
+                    }
+                    activateStarredOnly();
+                  }}
+                >
+                  {starredOnly ? "退出仅星标" : "进入仅星标"}
+                </button>
+              </div>
+            </div>
+            {starredConversations.length === 0 ? (
+              <div className="gv-empty">暂无星标会话。先在会话卡片点击“☆ 星标”。</div>
+            ) : (
+              <div className="gv-starred-list">
+                {starredConversations.slice(0, 8).map((item) => {
+                  const meta = classificationState.metaByConversationId[item.id] ?? EMPTY_META;
+                  return (
+                    <div className="gv-starred-item" key={`starred_${item.id}`}>
+                      <button className="gv-item-open" type="button" onClick={() => openConversation(item.url)} title={item.title}>
+                        {item.title}
+                      </button>
+                      <div className="gv-starred-meta">
+                        <span>{formatTime(item.lastSeenAt)}</span>
+                        {meta.note ? <span>{meta.note}</span> : <span>无备注</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <section className="gv-section">
+            <div className="gv-section-title-row">
+              <h2>会话时间线</h2>
+              <div className="gv-actions-inline">
+                <button className="gv-mini-btn" type="button" onClick={refreshConversationTimeline}>
+                  刷新时间线
+                </button>
+                <button className="gv-mini-btn" type="button" onClick={exportTimelineByDefault}>
+                  快速导出时间线
+                </button>
+                <button className="gv-mini-btn" type="button" onClick={() => exportTimelineByNodes("markdown")}>
+                  时间线 MD
+                </button>
+                <button className="gv-mini-btn" type="button" onClick={() => exportTimelineByNodes("html")}>
+                  时间线 HTML
+                </button>
+              </div>
+            </div>
+            <p className="gv-metric">
+              {activeConversationId
+                ? `当前会话共 ${timelineItems.length} 条消息，可点击直接定位。`
+                : "请先打开一个会话详情页（/c/...）再使用时间线。"}
+            </p>
+            {timelineStatus ? <p className="gv-export-status">{timelineStatus}</p> : null}
+
+            {!activeConversationId ? (
+              <div className="gv-empty">未检测到当前会话 ID。</div>
+            ) : (
+              <>
+                <input
+                  className="gv-input"
+                  type="search"
+                  value={timelineQuery}
+                  onChange={(event) => setTimelineQuery(event.target.value)}
+                  placeholder="搜索时间线（按消息内容关键词）"
+                  aria-label="搜索时间线"
+                />
+                <div className="gv-filter-row gv-filter-row-compact">
+                  <InlineSelect
+                    ariaLabel="筛选角色"
+                    value={timelineRoleFilter}
+                    options={timelineRoleFilterOptions}
+                    onChange={setTimelineRoleFilter}
+                  />
+                  <button
+                    className="gv-mini-btn"
+                    type="button"
+                    onClick={() => {
+                      setTimelineQuery("");
+                      setTimelineRoleFilter("all");
+                    }}
+                  >
+                    清空筛选
+                  </button>
+                </div>
+
+                <div className="gv-timeline-list">
+                  {filteredTimelineItems.length === 0 ? (
+                    <div className="gv-empty">没有匹配的时间线节点。</div>
+                  ) : (
+                    filteredTimelineItems.map((item) => (
+                      <button
+                        key={item.id}
+                        className={`gv-timeline-item ${timelineActiveId === item.id ? "gv-timeline-item-active" : ""}`}
+                        type="button"
+                        onClick={() => jumpToTimelineItem(item.id)}
+                      >
+                        <span className="gv-timeline-head">
+                          <span className={`gv-role-badge gv-role-${item.role}`}>{timelineRoleLabel(item.role)}</span>
+                          <span>{`第 ${item.index} 条 · ${item.charCount} 字`}</span>
+                        </span>
+                        <span className="gv-timeline-preview">{item.preview}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </>
+            )}
+          </section>
+
+          <section className="gv-section">
+            <div className="gv-section-title-row">
+              <h2>公式工作台</h2>
+              <div className="gv-actions-inline">
+                <button className="gv-mini-btn" type="button" onClick={refreshConversationFormulas}>
+                  刷新公式
+                </button>
+              </div>
+            </div>
+            <p className="gv-metric">
+              {activeConversationId
+                ? `当前会话检测到 ${formulaItems.length} 个公式，可复制 LaTeX / Word 公式或定位。`
+                : "请先打开一个会话详情页（/c/...）再使用公式工作台。"}
+            </p>
+            {settings.formulaClickCopyEnabled ? (
+              <p className="gv-metric">已开启“点击页面公式自动复制 TeX”。</p>
+            ) : null}
+            {formulaStatus ? <p className="gv-export-status">{formulaStatus}</p> : null}
+            {formulaCopiedTex ? (
+              <div className="gv-formula-copied">
+                <div className="gv-formula-copied-head">
+                  <span>最近复制的 LaTeX</span>
+                  <span>{formulaCopiedFrom}</span>
+                </div>
+                <code className="gv-formula-tex">{formulaCopiedTex}</code>
+              </div>
+            ) : null}
+
+            {!activeConversationId ? (
+              <div className="gv-empty">未检测到当前会话 ID。</div>
+            ) : (
+              <>
+                <input
+                  className="gv-input"
+                  type="search"
+                  value={formulaQuery}
+                  onChange={(event) => setFormulaQuery(event.target.value)}
+                  placeholder="搜索公式（按 TeX 内容）"
+                  aria-label="搜索公式"
+                />
+                <div className="gv-filter-row gv-filter-row-compact">
+                  <InlineSelect
+                    ariaLabel="筛选公式类型"
+                    value={formulaDisplayFilter}
+                    options={formulaDisplayFilterOptions}
+                    onChange={setFormulaDisplayFilter}
+                  />
+                  <button
+                    className="gv-mini-btn"
+                    type="button"
+                    onClick={() => {
+                      setFormulaQuery("");
+                      setFormulaDisplayFilter("all");
+                    }}
+                  >
+                    清空筛选
+                  </button>
+                </div>
+
+                <div className="gv-formula-list">
+                  {filteredFormulaItems.length === 0 ? (
+                    <div className="gv-empty">没有匹配的公式。</div>
+                  ) : (
+                    filteredFormulaItems.map((item) => {
+                      const favorite =
+                        activeConversationId
+                          ? formulaFavoriteByKey.get(buildFormulaFavoriteKey(activeConversationId, item.displayMode, item.tex))
+                          : undefined;
+                      return (
+                      <div
+                        key={item.id}
+                        className={`gv-formula-item ${formulaActiveId === item.id ? "gv-formula-item-active" : ""}`}
+                      >
+                        <div className="gv-formula-head">
+                          <span className={`gv-formula-badge gv-formula-${item.displayMode}`}>{formulaDisplayLabel(item.displayMode)}</span>
+                          <span className="gv-formula-meta">{`消息 ${item.messageIndex} · ${item.source}`}</span>
+                          {favorite ? <span className="gv-formula-fav-tip">已收藏</span> : null}
+                        </div>
+                        <code className="gv-formula-tex">{item.tex}</code>
+                        <div className="gv-btn-row">
+                          <button className="gv-mini-btn" type="button" onClick={() => copyFormulaTex(item.tex, "公式工作台")}>
+                            复制 TeX
+                          </button>
+                          <button
+                            className="gv-mini-btn"
+                            type="button"
+                            onClick={() => copyFormulaWordSource(item.mathml, item.tex, "公式工作台")}
+                          >
+                            复制 Word
+                          </button>
+                          <button className="gv-mini-btn" type="button" onClick={() => jumpToFormulaItem(item.id)}>
+                            定位消息
+                          </button>
+                          <button
+                            className={`gv-mini-btn ${favorite ? "gv-mini-btn-active" : ""}`}
+                            type="button"
+                            onClick={() => toggleFormulaFavorite(item)}
+                          >
+                            {favorite ? "取消收藏" : "收藏公式"}
+                          </button>
+                        </div>
+                      </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                <div className="gv-formula-favorites">
+                  <div className="gv-section-title-row">
+                    <h3>公式收藏</h3>
+                    <span className="gv-inline-empty">{`共 ${formulaFavorites.length} 条`}</span>
+                  </div>
+                  <input
+                    className="gv-input"
+                    type="search"
+                    value={formulaFavoriteQuery}
+                    onChange={(event) => setFormulaFavoriteQuery(event.target.value)}
+                    placeholder="搜索别名 / TeX / 会话标题"
+                    aria-label="搜索公式收藏"
+                  />
+                  <div className="gv-formula-fav-list">
+                    {filteredFormulaFavorites.length === 0 ? (
+                      <div className="gv-empty">暂无收藏公式，先在上方点击“收藏公式”。</div>
+                    ) : (
+                      filteredFormulaFavorites.map((favorite) => (
+                        <div className="gv-formula-fav-item" key={favorite.id}>
+                          <div className="gv-formula-fav-head">
+                            <input
+                              className="gv-input gv-formula-alias-input"
+                              type="text"
+                              value={favorite.alias}
+                              onChange={(event) => updateFormulaFavoriteAlias(favorite.id, event.target.value)}
+                              placeholder="公式别名"
+                              aria-label={`公式别名 ${favorite.alias}`}
+                            />
+                            <span className="gv-formula-meta">{`${formulaDisplayLabel(favorite.displayMode)} · ${favorite.sourceConversationTitle}`}</span>
+                          </div>
+                          <code className="gv-formula-tex">{favorite.tex}</code>
+                          <div className="gv-btn-row">
+                            <button className="gv-mini-btn" type="button" onClick={() => copyFormulaTex(favorite.tex, "公式收藏")}>
+                              复制 TeX
+                            </button>
+                            <button
+                              className="gv-mini-btn"
+                              type="button"
+                              onClick={() => copyFormulaWordSource(favorite.mathml, favorite.tex, "公式收藏")}
+                            >
+                              复制 Word
+                            </button>
+                            <button className="gv-mini-btn" type="button" onClick={() => locateFormulaFavorite(favorite)}>
+                              {favorite.sourceConversationId === activeConversationId ? "定位来源" : "打开来源会话"}
+                            </button>
+                            <button className="gv-mini-btn gv-danger-btn" type="button" onClick={() => removeFormulaFavorite(favorite.id)}>
+                              删除收藏
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </section>
+
+          <section className="gv-section">
+            <div className="gv-section-title-row">
+              <h2>Mermaid 工作台</h2>
+              <div className="gv-actions-inline">
+                <button className="gv-mini-btn" type="button" onClick={refreshConversationMermaid}>
+                  刷新图表
+                </button>
+              </div>
+            </div>
+            <p className="gv-metric">
+              {activeConversationId
+                ? `当前会话检测到 ${mermaidItems.length} 个 Mermaid 图表，可预览、复制源码并定位消息。`
+                : "请先打开一个会话详情页（/c/...）再使用 Mermaid 工作台。"}
+            </p>
+            {mermaidStatus ? <p className="gv-export-status">{mermaidStatus}</p> : null}
+
+            {!activeConversationId ? (
+              <div className="gv-empty">未检测到当前会话 ID。</div>
+            ) : (
+              <>
+                <input
+                  className="gv-input"
+                  type="search"
+                  value={mermaidQuery}
+                  onChange={(event) => setMermaidQuery(event.target.value)}
+                  placeholder="搜索 Mermaid（按首行或源码关键词）"
+                  aria-label="搜索 Mermaid 图表"
+                />
+                <div className="gv-mermaid-list">
+                  {filteredMermaidItems.length === 0 ? (
+                    <div className="gv-empty">没有匹配的 Mermaid 图表。</div>
+                  ) : (
+                    filteredMermaidItems.map((item) => {
+                      const svg = mermaidSvgById[item.id];
+                      const errorText = mermaidErrorById[item.id];
+                      return (
+                        <div
+                          key={item.id}
+                          className={`gv-mermaid-item ${mermaidActiveId === item.id ? "gv-mermaid-item-active" : ""}`}
+                        >
+                          <div className="gv-mermaid-head">
+                            <span className="gv-formula-badge">Mermaid</span>
+                            <span className="gv-formula-meta">{`消息 ${item.messageIndex} · ${item.preview}`}</span>
+                          </div>
+                          <code className="gv-formula-tex">{item.code}</code>
+                          <div className="gv-mermaid-canvas-wrap">
+                            {svg ? (
+                              <div
+                                className="gv-mermaid-canvas"
+                                dangerouslySetInnerHTML={{ __html: svg }}
+                              />
+                            ) : errorText ? (
+                              <div className="gv-empty">{errorText}</div>
+                            ) : (
+                              <div className="gv-empty">图表渲染中...</div>
+                            )}
+                          </div>
+                          <div className="gv-btn-row">
+                            <button className="gv-mini-btn" type="button" onClick={() => copyMermaidCode(item.code)}>
+                              复制源码
+                            </button>
+                            <button className="gv-mini-btn" type="button" onClick={() => jumpToMermaidItem(item.id)}>
+                              定位消息
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </>
+            )}
+          </section>
+          <section className="gv-section">
+            <h2>分类管理</h2>
+            <div className="gv-form-row">
+              <input
+                className="gv-input"
+                type="text"
+                value={folderDraft}
+                onChange={(event) => setFolderDraft(event.target.value)}
+                placeholder="新建文件夹"
+                aria-label="新建文件夹"
+              />
+              <button className="gv-mini-btn" type="button" onClick={createFolder}>
+                添加
+              </button>
+            </div>
+
+            <div className="gv-chip-wrap">
+              {classificationState.folders.length === 0 ? (
+                <span className="gv-inline-empty">暂无文件夹</span>
+              ) : (
+                classificationState.folders.map((folder) => (
+                  <span className="gv-chip" key={folder.id}>
+                    <span>{folder.name}</span>
+                    <button className="gv-chip-remove" type="button" onClick={() => removeFolder(folder.id)} aria-label={`删除文件夹 ${folder.name}`}>
+                      ×
+                    </button>
+                  </span>
+                ))
+              )}
+            </div>
+
+            <div className="gv-form-row">
+              <input
+                className="gv-input"
+                type="text"
+                value={tagDraft}
+                onChange={(event) => setTagDraft(event.target.value)}
+                placeholder="新建标签"
+                aria-label="新建标签"
+              />
+              <button className="gv-mini-btn" type="button" onClick={createTag}>
+                添加
+              </button>
+            </div>
+
+            <div className="gv-chip-wrap">
+              {classificationState.tags.length === 0 ? (
+                <span className="gv-inline-empty">暂无标签</span>
+              ) : (
+                classificationState.tags.map((tag) => (
+                  <span className="gv-chip gv-chip-tag" key={tag.id}>
+                    <span>{tag.name}</span>
+                    <button className="gv-chip-remove" type="button" onClick={() => removeTag(tag.id)} aria-label={`删除标签 ${tag.name}`}>
+                      ×
+                    </button>
+                  </span>
+                ))
+              )}
+            </div>
+          </section>
+
+          <section className="gv-section">
+            <div className="gv-section-title-row">
+              <h2>会话索引</h2>
+              <div className="gv-actions-inline">
+                <button className="gv-mini-btn" type="button" onClick={refreshVisibleConversations}>
+                  重新扫描
+                </button>
+                <button className="gv-mini-btn" type="button" onClick={exportConversationDefault}>
+                  快速导出
+                </button>
+                <button className="gv-mini-btn" type="button" onClick={exportConversationMarkdown}>
+                  导出 MD
+                </button>
+                <button className="gv-mini-btn" type="button" onClick={exportConversationHtml}>
+                  导出 HTML
+                </button>
+              </div>
+            </div>
+            <p className="gv-metric">
+              当前可见 <strong>{visibleCount}</strong> 条，已索引 <strong>{conversationIndex.length}</strong> 条
+            </p>
+            {exportStatus ? <p className="gv-export-status">{exportStatus}</p> : null}
+            {conversationStatus ? <p className="gv-export-status">{conversationStatus}</p> : null}
+
+            <input
+              className="gv-input"
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索标题 / 会话 ID / 备注"
+              aria-label="搜索会话"
+            />
+
+            <div className="gv-folder-quick-wrap">
+              <div className="gv-folder-quick-head">打开文件夹</div>
+              <div className="gv-folder-quick-list">
+                <button
+                  className={`gv-folder-pill ${folderFilter === "all" && !starredOnly ? "gv-folder-pill-active" : ""}`}
+                  type="button"
+                  onClick={() => openFolderView("all")}
+                >
+                  <span>全部</span>
+                  <span>{conversationIndex.length}</span>
+                </button>
+                <button
+                  className={`gv-folder-pill ${folderFilter === "uncategorized" && !starredOnly ? "gv-folder-pill-active" : ""}`}
+                  type="button"
+                  onClick={() => openFolderView("uncategorized")}
+                >
+                  <span>未分类</span>
+                  <span>{uncategorizedConversationCount}</span>
+                </button>
+                {classificationState.folders.map((folder) => (
+                  <button
+                    key={`folder_quick_${folder.id}`}
+                    className={`gv-folder-pill ${folderFilter === folder.id && !starredOnly ? "gv-folder-pill-active" : ""}`}
+                    type="button"
+                    onClick={() => openFolderView(folder.id)}
+                  >
+                    <span>{folder.name}</span>
+                    <span>{folderConversationCountMap.get(folder.id) ?? 0}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="gv-filter-simple-row">
+              <button
+                className={`gv-mini-btn ${starredOnly ? "gv-mini-btn-active" : ""}`}
+                type="button"
+                onClick={() => setStarredOnly((previous) => !previous)}
+              >
+                仅星标
+              </button>
+              <button
+                className={`gv-mini-btn ${showAdvancedFilters ? "gv-mini-btn-active" : ""}`}
+                type="button"
+                onClick={() => setShowAdvancedFilters((previous) => !previous)}
+              >
+                {showAdvancedFilters ? "收起高级筛选" : "高级筛选"}
+              </button>
+              <button
+                className="gv-mini-btn"
+                type="button"
+                onClick={() => {
+                  setQuery("");
+                  setFolderFilter("all");
+                  setTagFilter("all");
+                  setStarredOnly(false);
+                  setShowAdvancedFilters(false);
+                }}
+              >
+                清空筛选
+              </button>
+            </div>
+
+            {showAdvancedFilters ? (
+              <div className="gv-filter-advanced">
+                <select className="gv-select" value={folderFilter} onChange={(event) => setFolderFilter(event.target.value)}>
+                  <option value="all">全部文件夹</option>
+                  <option value="uncategorized">未分类</option>
+                  {classificationState.folders.map((folder) => (
+                    <option key={folder.id} value={folder.id}>
+                      {folder.name}
+                    </option>
+                  ))}
+                </select>
+
+                <select className="gv-select" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>
+                  <option value="all">全部标签</option>
+                  {classificationState.tags.map((tag) => (
+                    <option key={tag.id} value={tag.id}>
+                      {tag.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+
+            <div className="gv-batch-panel">
+              <div className="gv-batch-head">
+                <span>{`已选择 ${selectedConversationCount} 条`}</span>
+                <div className="gv-actions-inline">
+                  <button
+                    className={`gv-mini-btn ${batchPanelExpanded ? "gv-mini-btn-active" : ""}`}
+                    type="button"
+                    onClick={() => setBatchPanelExpanded((previous) => !previous)}
+                  >
+                    {batchPanelExpanded ? "收起批量" : "展开批量"}
+                  </button>
+                </div>
+              </div>
+
+              {batchPanelExpanded ? (
+                <>
+                  <div className="gv-batch-quick">
+                    <button className="gv-mini-btn" type="button" onClick={selectAllFilteredConversations}>
+                      全选当前筛选
+                    </button>
+                    <button className="gv-mini-btn" type="button" onClick={clearConversationSelection}>
+                      清空选择
+                    </button>
+                    <button
+                      className="gv-mini-btn"
+                      type="button"
+                      onClick={undoLastBatchOperation}
+                      disabled={!lastBatchUndo}
+                      title={lastBatchUndo ? `${lastBatchUndo.actionLabel}（${lastBatchUndo.ids.length} 条）` : "暂无可撤销操作"}
+                    >
+                      撤销批量
+                    </button>
+                  </div>
+                  <p className="gv-batch-hint">
+                    {lastBatchUndo
+                      ? `可撤销：${lastBatchUndo.actionLabel}（${lastBatchUndo.ids.length} 条，${formatTime(lastBatchUndo.createdAt)}） · Ctrl/⌘ + Shift + Z`
+                      : "快捷键：Ctrl/⌘ + Shift + B 全选，Ctrl/⌘ + Shift + N 清空，Ctrl/⌘ + Shift + Z 撤销"}
+                  </p>
+                  <div className="gv-batch-grid">
+                    <select className="gv-select" value={batchFolderId} onChange={(event) => setBatchFolderId(event.target.value)}>
+                      <option value="">未分类</option>
+                      {classificationState.folders.map((folder) => (
+                        <option key={`batch_folder_${folder.id}`} value={folder.id}>
+                          {folder.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button className="gv-mini-btn" type="button" onClick={applyBatchFolder}>
+                      批量设文件夹
+                    </button>
+
+                    <select className="gv-select" value={batchTagId} onChange={(event) => setBatchTagId(event.target.value)}>
+                      <option value="">选择标签</option>
+                      {classificationState.tags.map((tag) => (
+                        <option key={`batch_tag_${tag.id}`} value={tag.id}>
+                          {tag.name}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="gv-actions-inline">
+                      <button className="gv-mini-btn" type="button" onClick={applyBatchAddTag}>
+                        批量加标签
+                      </button>
+                      <button className="gv-mini-btn" type="button" onClick={applyBatchRemoveTag}>
+                        批量去标签
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <p className="gv-batch-hint">默认已收起，勾选会话后再展开批量操作。</p>
+              )}
+            </div>
+
+            <div className="gv-list">
+              {filteredConversations.length === 0 ? (
+                <div className="gv-empty">
+                  {conversationIndex.length === 0
+                    ? "暂无会话索引。请打开左侧聊天列表后稍等自动采集。"
+                    : starredOnly
+                      ? "当前处于“仅星标”筛选，没有匹配结果。可退出仅星标后查看全部会话。"
+                      : "没有匹配结果，试试其他关键词或分类筛选。"}
+                </div>
+              ) : (
+                filteredConversations.map((item) => {
+                  const isActive = item.id === activeConversationId;
+                  const meta = classificationState.metaByConversationId[item.id] ?? EMPTY_META;
+                  const selectedForBatch = selectedConversationIdSet.has(item.id);
+
+                  return (
+                    <div key={item.id} className={`gv-item ${isActive ? "gv-item-active" : ""}`}>
+                      <div className="gv-item-top">
+                        <label className="gv-check-wrap">
+                          <input
+                            type="checkbox"
+                            checked={selectedForBatch}
+                            onChange={() => toggleConversationSelection(item.id)}
+                            aria-label={`选择会话 ${item.title}`}
+                          />
+                          <span>{selectedForBatch ? "已选" : "选择"}</span>
+                        </label>
+                        <button className="gv-item-open" type="button" onClick={() => openConversation(item.url)} title={item.title}>
+                          {item.title}
+                        </button>
+                      </div>
+                      <span className="gv-item-meta">
+                        <button
+                          className={`gv-star-btn ${meta.starred ? "gv-star-btn-active" : ""}`}
+                          type="button"
+                          aria-label={meta.starred ? "取消星标" : "设为星标"}
+                          onClick={() => toggleConversationStar(item.id)}
+                        >
+                          {meta.starred ? "★ 已星标" : "☆ 星标"}
+                        </button>
+                        <span>{item.id.slice(0, 8)}</span>
+                        <span>{formatTime(item.lastSeenAt)}</span>
+                      </span>
+
+                      <div className="gv-item-controls">
+                        <select
+                          className="gv-select"
+                          value={meta.folderId ?? ""}
+                          onChange={(event) => setConversationFolder(item.id, event.target.value)}
+                        >
+                          <option value="">未分类</option>
+                          {classificationState.folders.map((folder) => (
+                            <option key={folder.id} value={folder.id}>
+                              {folder.name}
+                            </option>
+                          ))}
+                        </select>
+                        <button className="gv-mini-btn gv-mini-btn-subtle" type="button" onClick={() => openConversationFolder(meta.folderId)}>
+                          打开该文件夹
+                        </button>
+                      </div>
+
+                      <div className="gv-tag-row">
+                        {classificationState.tags.length === 0 ? (
+                          <span className="gv-inline-empty">暂无标签</span>
+                        ) : (
+                          classificationState.tags.map((tag) => {
+                            const selected = meta.tagIds.includes(tag.id);
+                            return (
+                              <button
+                                key={tag.id}
+                                className={`gv-tag ${selected ? "gv-tag-active" : ""}`}
+                                type="button"
+                                onClick={() => toggleConversationTag(item.id, tag.id)}
+                              >
+                                {tag.name}
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      <input
+                        className="gv-input gv-item-note"
+                        type="text"
+                        value={meta.note ?? ""}
+                        onChange={(event) => setConversationNote(item.id, event.target.value)}
+                        placeholder="添加备注（最多 240 字）"
+                        aria-label={`会话备注 ${item.title}`}
+                      />
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </section>
+            </>
+          ) : null}
+
+          {activeView === "prompts" ? (
+            <>
+          <section className="gv-section gv-section-highlight">
+            <p className="gv-metric">
+              当前共 <strong>{promptLibrary.length}</strong> 条模板，筛选后 <strong>{filteredPromptLibrary.length}</strong> 条，插入模式为
+              <strong>{settings.promptInsertMode === "append" ? " 追加" : " 覆盖"}</strong>。
+            </p>
+          </section>
+          <section className="gv-section">
+            <h2>提示词库</h2>
+            <input
+              className="gv-input"
+              type="search"
+              value={promptQuery}
+              onChange={(event) => setPromptQuery(event.target.value)}
+              placeholder="搜索标题 / 正文 / 标签"
+              aria-label="搜索提示词"
+            />
+            <div className="gv-filter-row gv-filter-row-compact">
+              <select
+                className="gv-select"
+                value={promptTagFilter}
+                onChange={(event) => setPromptTagFilter(event.target.value)}
+              >
+                <option value="all">全部标签</option>
+                {promptTagOptions.map((tag) => (
+                  <option key={tag} value={tag}>
+                    {tag}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="gv-mini-btn"
+                type="button"
+                onClick={() => {
+                  setPromptQuery("");
+                  setPromptTagFilter("all");
+                }}
+              >
+                清空筛选
+              </button>
+            </div>
+
+            <div className="gv-form-row">
+              <input
+                className="gv-input"
+                type="text"
+                value={promptTitleDraft}
+                onChange={(event) => setPromptTitleDraft(event.target.value)}
+                placeholder="提示词标题"
+                aria-label="提示词标题"
+              />
+              <button className="gv-mini-btn" type="button" onClick={savePrompt}>
+                {editingPromptId ? "更新" : "保存"}
+              </button>
+            </div>
+            <input
+              className="gv-input"
+              type="text"
+              value={promptTagsDraft}
+              onChange={(event) => setPromptTagsDraft(event.target.value)}
+              placeholder="标签（用逗号分隔，例如：写作, 学习, 代码）"
+              aria-label="提示词标签"
+            />
+            <textarea
+              className="gv-textarea"
+              value={promptContentDraft}
+              onChange={(event) => setPromptContentDraft(event.target.value)}
+              placeholder="输入提示词正文..."
+              aria-label="提示词正文"
+            />
+            <div className="gv-btn-row">
+              {editingPromptId ? (
+                <button
+                  className="gv-mini-btn"
+                  type="button"
+                  onClick={() => {
+                    setEditingPromptId("");
+                    setPromptTitleDraft("");
+                    setPromptContentDraft("");
+                    setPromptTagsDraft("");
+                  }}
+                >
+                  取消编辑
+                </button>
+              ) : (
+                <span className="gv-inline-empty">
+                  插入模式：{settings.promptInsertMode === "append" ? "追加到输入框" : "覆盖输入框"}
+                </span>
+              )}
+              <span className="gv-status">{promptStatus}</span>
+            </div>
+
+            <div className="gv-prompt-list">
+              {promptLibrary.length === 0 ? (
+                <div className="gv-empty">暂无提示词。先新增一条常用模板。</div>
+              ) : filteredPromptLibrary.length === 0 ? (
+                <div className="gv-empty">没有匹配的提示词，试试更换关键词或标签。</div>
+              ) : (
+                filteredPromptLibrary.map((snippet) => {
+                  const variables = extractPromptVariables(snippet.content);
+                  const variableValues = promptVariableValues[snippet.id] ?? {};
+                  const variablePanelOpen = promptVariableOpenId === snippet.id;
+
+                  return (
+                    <div className="gv-prompt-item" key={snippet.id}>
+                      <div className="gv-prompt-title">{snippet.title}</div>
+                      {snippet.tags.length > 0 ? (
+                        <div className="gv-prompt-tags">
+                          {snippet.tags.map((tag) => (
+                            <button
+                              key={`${snippet.id}_${tag}`}
+                              className={`gv-tag ${promptTagFilter === tag ? "gv-tag-active" : ""}`}
+                              type="button"
+                              onClick={() => setPromptTagFilter(tag)}
+                            >
+                              {tag}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                      <div className="gv-prompt-content">{snippet.content}</div>
+                      <div className="gv-btn-row">
+                        <button className="gv-mini-btn" type="button" onClick={() => copyPrompt(snippet.content)}>
+                          复制
+                        </button>
+                        <button className="gv-mini-btn" type="button" onClick={() => insertPrompt(snippet.content)}>
+                          插入
+                        </button>
+                        {variables.length > 0 ? (
+                          <button
+                            className={`gv-mini-btn ${variablePanelOpen ? "gv-mini-btn-active" : ""}`}
+                            type="button"
+                            onClick={() => {
+                              setPromptVariableOpenId((previous) => (previous === snippet.id ? "" : snippet.id));
+                            }}
+                          >
+                            变量({variables.length})
+                          </button>
+                        ) : null}
+                        <button className="gv-mini-btn" type="button" onClick={() => editPrompt(snippet)}>
+                          编辑
+                        </button>
+                        <button className="gv-mini-btn gv-danger-btn" type="button" onClick={() => deletePrompt(snippet.id)}>
+                          删除
+                        </button>
+                      </div>
+
+                      {variablePanelOpen ? (
+                        <div className="gv-variable-panel">
+                          <div className="gv-variable-grid">
+                            {variables.map((variable) => (
+                              <label className="gv-variable-item" key={`${snippet.id}_${variable}`}>
+                                <span>{variable}</span>
+                                <input
+                                  className="gv-input"
+                                  type="text"
+                                  value={variableValues[variable] ?? ""}
+                                  placeholder={`填写 ${variable}`}
+                                  onChange={(event) => setPromptVariableValue(snippet.id, variable, event.target.value)}
+                                />
+                              </label>
+                            ))}
+                          </div>
+                          <div className="gv-btn-row">
+                            <button className="gv-mini-btn" type="button" onClick={() => insertPromptWithVariables(snippet)}>
+                              填充并插入
+                            </button>
+                            <button
+                              className="gv-mini-btn"
+                              type="button"
+                              onClick={() =>
+                                setPromptVariableValues((previous) => ({
+                                  ...previous,
+                                  [snippet.id]: {}
+                                }))
+                              }
+                            >
+                              清空变量值
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </section>
+            </>
+          ) : null}
+
+          {activeView === "guide" ? (
+            <>
+          <section className="gv-section gv-section-highlight">
+            <h2>快速上手（1 分钟）</h2>
+            <ol className="gv-guide-list">
+              <li>打开 ChatGPT 任意页面后，右侧会出现 GPT Voyager 侧边栏入口。</li>
+              <li>先在“会话工作台”点一次“重新扫描”，建立本地会话索引。</li>
+              <li>通过搜索、文件夹、标签筛选找到会话，点击标题可直接打开。</li>
+              <li>在“提示词库”保存常用模板，支持复制、插入和变量填充。</li>
+              <li>在“设置中心”按你的习惯调整扫描、导出格式和快捷键。</li>
+            </ol>
+          </section>
+
+          <section className="gv-section">
+            <h2>功能地图</h2>
+            <div className="gv-guide-grid">
+              <article className="gv-guide-card">
+                <h3>会话工作台</h3>
+                <p>会话搜索、星标、备注、分类筛选、批量操作、时间线跳转、公式复制与定位。</p>
+              </article>
+              <article className="gv-guide-card">
+                <h3>提示词库</h3>
+                <p>模板增删改查、标签筛选、变量模板（{"{{变量}}"}）填充后插入对话框。</p>
+              </article>
+              <article className="gv-guide-card">
+                <h3>设置中心</h3>
+                <p>自动扫描、导出格式、快捷键开关、点击公式复制开关、JSON 备份恢复。</p>
+              </article>
+              <article className="gv-guide-card">
+                <h3>导出能力</h3>
+                <p>当前会话支持导出 Markdown / HTML，公式会尽量保留 LaTeX 可用形式。</p>
+              </article>
+            </div>
+          </section>
+
+          <section className="gv-section">
+            <h2>快捷键速查</h2>
+            <div className="gv-shortcut-list">
+              <div className="gv-shortcut-item">
+                <code className="gv-kbd">Ctrl/⌘ + Shift + K</code>
+                <span>展开/收起侧边栏</span>
+              </div>
+              <div className="gv-shortcut-item">
+                <code className="gv-kbd">Ctrl/⌘ + Shift + R</code>
+                <span>重新扫描会话列表</span>
+              </div>
+              <div className="gv-shortcut-item">
+                <code className="gv-kbd">Ctrl/⌘ + Shift + E</code>
+                <span>快速导出当前会话（按默认格式）</span>
+              </div>
+              <div className="gv-shortcut-item">
+                <code className="gv-kbd">Ctrl/⌘ + Shift + B</code>
+                <span>全选当前筛选会话（批量）</span>
+              </div>
+              <div className="gv-shortcut-item">
+                <code className="gv-kbd">Ctrl/⌘ + Shift + N</code>
+                <span>清空批量选择</span>
+              </div>
+              <div className="gv-shortcut-item">
+                <code className="gv-kbd">Ctrl/⌘ + Shift + Z</code>
+                <span>撤销上一次批量操作</span>
+              </div>
+            </div>
+          </section>
+
+          <section className="gv-section">
+            <h2>常见问题</h2>
+            <div className="gv-guide-faq">
+              <article className="gv-guide-card">
+                <h3>为什么提示词插入失败？</h3>
+                <p>先确认当前页面焦点在 ChatGPT 对话页，且输入框已经渲染完成；必要时重新扫描后再试。</p>
+              </article>
+              <article className="gv-guide-card">
+                <h3>为什么看不到会话？</h3>
+                <p>ChatGPT 左侧会话列表需要先加载到页面。向下滚动列表后再点“重新扫描”。</p>
+              </article>
+              <article className="gv-guide-card">
+                <h3>如何避免误操作批量修改？</h3>
+                <p>先在筛选条件下预览结果，再执行批量动作。若误操作，可用“撤销上一次批量操作”。</p>
+              </article>
+            </div>
+          </section>
+            </>
+          ) : null}
+
+          {activeView === "settings" ? (
+            <>
+          <section className="gv-section">
+            <h2>设置中心</h2>
+            <div className="gv-settings-grid">
+              <label className="gv-setting-item">
+                <span>自动扫描会话</span>
+                <input
+                  type="checkbox"
+                  checked={settings.autoScanEnabled}
+                  onChange={(event) =>
+                    setSettings((previous) => ({
+                      ...previous,
+                      autoScanEnabled: event.target.checked
+                    }))
+                  }
+                />
+              </label>
+
+              <label className="gv-setting-item">
+                <span>扫描间隔（秒）</span>
+                <select
+                  className="gv-select"
+                  value={String(settings.scanIntervalSec)}
+                  onChange={(event) =>
+                    setSettings((previous) => ({
+                      ...previous,
+                      scanIntervalSec: Number(event.target.value)
+                    }))
+                  }
+                >
+                  <option value="2">2</option>
+                  <option value="5">5</option>
+                  <option value="10">10</option>
+                  <option value="20">20</option>
+                  <option value="30">30</option>
+                </select>
+              </label>
+
+              <label className="gv-setting-item">
+                <span>提示词插入模式</span>
+                <select
+                  className="gv-select"
+                  value={settings.promptInsertMode}
+                  onChange={(event) =>
+                    setSettings((previous) => ({
+                      ...previous,
+                      promptInsertMode: event.target.value as UserSettings["promptInsertMode"]
+                    }))
+                  }
+                >
+                  <option value="append">追加到输入框</option>
+                  <option value="replace">覆盖输入框</option>
+                </select>
+              </label>
+
+              <label className="gv-setting-item">
+                <span>默认导出格式</span>
+                <select
+                  className="gv-select"
+                  value={settings.defaultExportFormat}
+                  onChange={(event) =>
+                    setSettings((previous) => ({
+                      ...previous,
+                      defaultExportFormat: event.target.value as UserSettings["defaultExportFormat"]
+                    }))
+                  }
+                >
+                  <option value="markdown">Markdown</option>
+                  <option value="html">HTML</option>
+                </select>
+              </label>
+
+              <label className="gv-setting-item">
+                <span>启用快捷键（K/R/E/B/N/Z）</span>
+                <input
+                  type="checkbox"
+                  checked={settings.enableShortcuts}
+                  onChange={(event) =>
+                    setSettings((previous) => ({
+                      ...previous,
+                      enableShortcuts: event.target.checked
+                    }))
+                  }
+                />
+              </label>
+
+              <label className="gv-setting-item">
+                <span>点击页面公式自动复制 TeX</span>
+                <input
+                  type="checkbox"
+                  checked={settings.formulaClickCopyEnabled}
+                  onChange={(event) =>
+                    setSettings((previous) => ({
+                      ...previous,
+                      formulaClickCopyEnabled: event.target.checked
+                    }))
+                  }
+                />
+              </label>
+            </div>
+          </section>
+
+          <section className="gv-section">
+            <h2>本地数据备份</h2>
+            <p className="gv-metric">支持将当前索引、分类、提示词、公式收藏和设置导出为 JSON，并可在本地恢复。</p>
+            <div className="gv-actions-inline">
+              <button className="gv-mini-btn" type="button" onClick={exportJsonBackup}>
+                导出 JSON 备份
+              </button>
+              <button className="gv-mini-btn" type="button" onClick={openImportBackupPicker}>
+                导入 JSON 备份
+              </button>
+              <input
+                ref={backupFileInputRef}
+                className="gv-hidden-input"
+                type="file"
+                accept=".json,application/json"
+                onChange={importJsonBackup}
+              />
+            </div>
+            {backupStatus ? <p className="gv-export-status">{backupStatus}</p> : null}
+          </section>
+
+          <section className="gv-section">
+            <h2>迭代路线图</h2>
+            <ul>
+              <li>P1：提示词变量预设与共享模板</li>
+              <li>P1：时间线节点标签与高亮标注</li>
+              <li>P1：Mermaid 图表收藏与导出</li>
+            </ul>
+          </section>
+            </>
+          ) : null}
+        </div>
+      </aside>
+    </div>
+  );
+}
