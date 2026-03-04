@@ -52,3 +52,4 @@
 | 2026-03-04 | FEAT-040 | Web Store 上线资料包 + 瓶子图标接入 | feat/chore/docs | N/A | `docs/features/2026-03-04-p1-webstore-launch-kit-and-bottle-icons.md` | 补齐图标、素材、隐私页与商店上架文档，支持快速提审 |
 | 2026-03-04 | FEAT-041 | README 首页对外展示优化 + GitHub Release ZIP 分发指南 | docs/chore | N/A | `docs/features/2026-03-04-p1-readme-homepage-and-github-release-zip-guide.md` | 首页突出下载入口与视觉展示，补齐 GitHub Release 发版流程 |
 | 2026-03-04 | FEAT-042 | Tag 自动发布 ZIP + README 截图区精简 | chore/docs | N/A | `docs/features/2026-03-04-p1-auto-release-zip-on-tag-and-readme-trim.md` | 推送标签后自动创建 Release 并上传 ZIP，README 去掉占位截图块 |
+| 2026-03-04 | FEAT-043 | README 展示页精简（移除顶部瓶子图并重写说明结构） | docs | N/A | `docs/features/2026-03-04-p1-readme-showcase-cleanup-no-top-bottle.md` | 首页改为纯展示导向文案结构，突出下载与安装路径 |

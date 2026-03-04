@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GPT Voyager",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "ChatGPT 网页侧边栏效率扩展（MVP）",
   "minimum_chrome_version": "120",
   "icons": {
