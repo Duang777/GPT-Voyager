@@ -27,6 +27,7 @@
         <a href="#changelog">Changelog</a>
         <a href="#faq">FAQ</a>
         <a href="#download">Download</a>
+        <a href="#install-guide">Install Guide</a>
         <a href="./privacy.html">Privacy</a>
       </nav>
       <a class="btn btn-outline" href="https://github.com/Duang777/GPT" target="_blank" rel="noreferrer">
@@ -44,7 +45,7 @@
             export/backup, and formula plus Mermaid tooling for technical workflows.
           </p>
           <div class="hero-actions">
-            <a class="btn btn-primary" href="#download">Download ZIP</a>
+            <a class="btn btn-primary" href="https://github.com/Duang777/GPT/releases/latest" target="_blank" rel="noreferrer">Latest Release</a>
             <a class="btn btn-outline" href="https://duang777.github.io/GPT/" target="_blank" rel="noreferrer">
               Open Live Site
             </a>
@@ -250,23 +251,61 @@
           <div>
             <p class="kicker">DOWNLOAD</p>
             <h2>Ready to install GPT Voyager?</h2>
-            <p>Grab source zip or open the repository for commits, docs, and releases.</p>
+            <p>Choose release package (recommended) or source install path.</p>
           </div>
           <div class="download-actions">
-            <a class="btn btn-primary" href="https://github.com/Duang777/GPT/archive/refs/heads/main.zip">
+            <a class="btn btn-primary" href="https://github.com/Duang777/GPT/releases/latest" target="_blank" rel="noreferrer">
+              Download Latest Release
+            </a>
+            <a class="btn btn-outline" href="https://github.com/Duang777/GPT/releases" target="_blank" rel="noreferrer">
+              View All Releases
+            </a>
+            <a class="btn btn-outline" href="https://github.com/Duang777/GPT/archive/refs/heads/main.zip" target="_blank" rel="noreferrer">
               Download Source ZIP
+            </a>
+            <a class="btn btn-outline" href="https://github.com/Duang777/GPT/blob/main/docs/store/GITHUB_RELEASE_ZIP_GUIDE_ZH-CN.md" target="_blank" rel="noreferrer">
+              安装指南（中文）
             </a>
             <a class="btn btn-outline" href="https://github.com/Duang777/GPT" target="_blank" rel="noreferrer">
               View Repository
             </a>
-            <a class="btn btn-outline" href="https://duang777.github.io/GPT/" target="_blank" rel="noreferrer">
-              Open Live Site
-            </a>
-            <a class="btn btn-outline" href="./privacy.html">
-              Privacy Policy
-            </a>
           </div>
         </article>
+      </section>
+
+      <section id="install-guide" class="section reveal">
+        <div class="section-title">
+          <p class="kicker">INSTALL GUIDE</p>
+          <h2>Download and install in 2 paths</h2>
+        </div>
+        <div class="guide-grid">
+          <article class="guide-card">
+            <h3>Path A: Release package (Recommended)</h3>
+            <ol class="guide-steps">
+              <li>Open <a href="https://github.com/Duang777/GPT/releases/latest" target="_blank" rel="noreferrer">Latest Release</a>.</li>
+              <li>Download the release ZIP asset.</li>
+              <li>Extract the ZIP to a local folder.</li>
+              <li>Open <code>chrome://extensions</code> and enable Developer mode.</li>
+              <li>Click "Load unpacked" and select the extracted extension folder.</li>
+            </ol>
+          </article>
+          <article class="guide-card">
+            <h3>Path B: Source build install</h3>
+            <ol class="guide-steps">
+              <li>Download <a href="https://github.com/Duang777/GPT/archive/refs/heads/main.zip" target="_blank" rel="noreferrer">Source ZIP</a> or clone repository.</li>
+              <li>Run <code>npm install</code> in project root.</li>
+              <li>Run <code>npm run build</code> to generate <code>dist/</code>.</li>
+              <li>Open <code>chrome://extensions</code> and enable Developer mode.</li>
+              <li>Load unpacked and select <code>dist/</code>.</li>
+            </ol>
+          </article>
+        </div>
+        <p class="guide-note">
+          Chinese release guide: 
+          <a href="https://github.com/Duang777/GPT/blob/main/docs/store/GITHUB_RELEASE_ZIP_GUIDE_ZH-CN.md" target="_blank" rel="noreferrer">
+            docs/store/GITHUB_RELEASE_ZIP_GUIDE_ZH-CN.md
+          </a>
+        </p>
       </section>
     </main>
 

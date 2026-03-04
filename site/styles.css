@@ -616,6 +616,60 @@ main,
   gap: 0.54rem;
 }
 
+.guide-grid {
+  margin-top: 0.92rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.68rem;
+}
+
+.guide-card {
+  border: 1px solid var(--line);
+  border-radius: 0.84rem;
+  background: var(--surface);
+  padding: 0.9rem;
+}
+
+.guide-card h3 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.guide-steps {
+  margin: 0.62rem 0 0;
+  padding-left: 1.08rem;
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+}
+
+.guide-steps li {
+  margin-top: 0.32rem;
+}
+
+.guide-steps a {
+  color: #111111;
+  font-weight: 700;
+}
+
+.guide-steps code {
+  background: #f3f4f6;
+  border-radius: 0.26rem;
+  padding: 0.1rem 0.28rem;
+  font-family: "Space Mono", monospace;
+  font-size: 0.76rem;
+}
+
+.guide-note {
+  margin: 0.7rem 0 0;
+  color: #6b7280;
+  font-size: 0.84rem;
+}
+
+.guide-note a {
+  color: #111111;
+  font-weight: 700;
+}
+
 .footer {
   margin-top: 2.6rem;
   margin-bottom: 1.5rem;
@@ -705,6 +759,10 @@ main,
   }
 
   .download-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .guide-grid {
     grid-template-columns: 1fr;
   }
 }
