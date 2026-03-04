@@ -5,259 +5,271 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="GPT Voyager is a ChatGPT productivity extension with conversation index, prompt library, export tools, and formula/diagram workspaces."
+      content="GPT Voyager is a store-style landing page for a ChatGPT productivity extension: screenshots, changelog, FAQ, and download."
     />
-    <title>GPT Voyager | Extension Store Style Page</title>
+    <title>GPT Voyager | Extension Storefront</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Manrope:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800;900&family=Space+Mono:wght@400;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="mesh mesh-a" aria-hidden="true"></div>
-    <div class="mesh mesh-b" aria-hidden="true"></div>
-    <div class="noise" aria-hidden="true"></div>
+    <div class="bg-layer bg-1" aria-hidden="true"></div>
+    <div class="bg-layer bg-2" aria-hidden="true"></div>
+    <div class="grain" aria-hidden="true"></div>
 
     <header class="topbar">
-      <a class="brand" href="#top" aria-label="Go to top">
-        <span class="brand-badge">GV</span>
-        <span class="brand-name">GPT Voyager</span>
+      <a class="brand" href="#top" aria-label="Back to top">
+        <span class="brand-mark">GV</span>
+        <span class="brand-text">GPT Voyager</span>
       </a>
-      <nav class="topnav" aria-label="Primary">
+      <nav class="topnav" aria-label="Primary navigation">
         <a href="#screenshots">Screenshots</a>
         <a href="#changelog">Changelog</a>
         <a href="#faq">FAQ</a>
         <a href="#download">Download</a>
       </nav>
-      <a class="btn btn-ghost" href="https://github.com/Duang777/GPT" target="_blank" rel="noreferrer">
-        GitHub
+      <a class="btn btn-outline" href="https://github.com/Duang777/GPT" target="_blank" rel="noreferrer">
+        Repository
       </a>
     </header>
 
     <main id="top">
       <section class="hero reveal">
         <div class="hero-copy">
-          <p class="overline">CHROME EXTENSION</p>
-          <h1>Your ChatGPT Workspace, Not Just a Chat History.</h1>
-          <p>
-            GPT Voyager turns scattered conversations into a structured system with local indexing, reusable prompts,
-            quick exports, and visual math/diagram tooling.
+          <p class="kicker">CHATGPT PRODUCTIVITY EXTENSION</p>
+          <h1>From chat history to an organized operating system.</h1>
+          <p class="hero-text">
+            GPT Voyager adds a workspace layer on top of ChatGPT: conversation indexing, reusable prompts,
+            export/backup, and formula plus Mermaid tooling for technical workflows.
           </p>
           <div class="hero-actions">
-            <a class="btn btn-solid" href="#download">Download ZIP</a>
-            <a class="btn btn-ghost" href="https://duang777.github.io/GPT/" target="_blank" rel="noreferrer">
-              Live Page
+            <a class="btn btn-primary" href="#download">Download ZIP</a>
+            <a class="btn btn-outline" href="https://duang777.github.io/GPT/" target="_blank" rel="noreferrer">
+              Open Live Site
             </a>
           </div>
           <ul class="hero-stats">
-            <li><strong>4.9/5</strong><span>User score</span></li>
-            <li><strong>30s</strong><span>Time to value</span></li>
-            <li><strong>100%</strong><span>Local-first data</span></li>
+            <li><strong>4.9</strong><span>User score</span></li>
+            <li><strong>30s</strong><span>Time to first value</span></li>
+            <li><strong>100%</strong><span>Local-first storage</span></li>
           </ul>
         </div>
 
-        <article class="store-card" aria-label="Extension summary card">
+        <aside class="store-panel">
           <div class="store-head">
-            <div class="icon-wrap">
-              <span>GV</span>
-            </div>
+            <div class="store-icon">GV</div>
             <div>
               <h2>GPT Voyager</h2>
-              <p>ChatGPT Productivity Toolkit</p>
+              <p>ChatGPT Efficiency Toolkit</p>
             </div>
           </div>
-          <dl class="meta-grid">
+          <dl class="meta-list">
             <div>
               <dt>Version</dt>
               <dd>0.1.0</dd>
             </div>
             <div>
-              <dt>Support</dt>
+              <dt>Browser</dt>
               <dd>Chrome / Edge</dd>
+            </div>
+            <div>
+              <dt>Permission</dt>
+              <dd>Storage only</dd>
             </div>
             <div>
               <dt>Scope</dt>
               <dd>chatgpt.com</dd>
             </div>
-            <div>
-              <dt>Storage</dt>
-              <dd>Local only</dd>
-            </div>
           </dl>
-          <a class="btn btn-wide" href="#download">Install Extension</a>
-        </article>
+          <a class="btn btn-primary btn-block" href="#download">Install Now</a>
+          <p class="store-note">Manual install from source. No external data upload by default.</p>
+        </aside>
       </section>
 
       <section id="screenshots" class="section reveal">
-        <div class="section-head">
-          <p class="overline">SCREENSHOTS</p>
-          <h2>Store-style preview gallery</h2>
+        <div class="section-title">
+          <p class="kicker">SCREENSHOTS</p>
+          <h2>Interactive preview gallery</h2>
         </div>
 
-        <div class="shots-layout">
-          <article class="shot-stage">
-            <div class="shot-frame">
-              <div class="frame-top">
+        <div class="preview-layout">
+          <article class="preview-stage" id="previewStage" data-mode="index" aria-live="polite">
+            <div class="browser-shell">
+              <div class="browser-bar">
                 <span></span><span></span><span></span>
+                <div class="browser-url">chatgpt.com</div>
               </div>
-              <div class="frame-body">
-                <p class="shot-label" id="shotLabel">Sidebar workspace</p>
-                <h3 id="shotTitle">Conversation index + smart filtering</h3>
-                <p id="shotText">
-                  Scan visible ChatGPT sessions and open targets quickly by title, ID, folder, and tags.
-                </p>
-                <ul id="shotPoints">
-                  <li>Local indexed search</li>
-                  <li>Folder and tag pivots</li>
-                  <li>One-click open</li>
-                </ul>
+              <div class="browser-canvas">
+                <div class="mock-sidebar">
+                  <div class="mock-search"></div>
+                  <div class="mock-item"></div>
+                  <div class="mock-item"></div>
+                  <div class="mock-item"></div>
+                  <div class="mock-item"></div>
+                </div>
+                <div class="mock-main">
+                  <div class="mock-row mock-row-title"></div>
+                  <div class="mock-row"></div>
+                  <div class="mock-row"></div>
+                  <div class="mock-row short"></div>
+                  <div class="mock-matrix">
+                    <div></div>
+                    <div></div>
+                    <div></div>
+                  </div>
+                </div>
               </div>
+            </div>
+            <div class="preview-copy">
+              <p class="chip" id="previewChip">Workspace</p>
+              <h3 id="previewTitle">Conversation hub with search and filters</h3>
+              <p id="previewText">
+                Scan, classify, and jump to any conversation using local index, folder pivots, and tag filters.
+              </p>
+              <ul id="previewPoints">
+                <li>Indexed local lookup</li>
+                <li>Folder plus tag pivots</li>
+                <li>Fast open actions</li>
+              </ul>
             </div>
           </article>
 
-          <aside class="thumb-panel" aria-label="Screenshot navigation">
-            <button class="thumb is-active" data-shot="index">
+          <aside class="preview-nav" aria-label="Preview tabs">
+            <button class="preview-tab is-active" data-shot="index">
               <span>01</span>
-              <div>
-                <strong>Conversation Hub</strong>
-                <small>Search + organize</small>
-              </div>
+              <strong>Conversation Hub</strong>
+              <small>Search + classify</small>
             </button>
-            <button class="thumb" data-shot="prompt">
+            <button class="preview-tab" data-shot="prompt">
               <span>02</span>
-              <div>
-                <strong>Prompt Library</strong>
-                <small>Template + variables</small>
-              </div>
+              <strong>Prompt Library</strong>
+              <small>Templates + variables</small>
             </button>
-            <button class="thumb" data-shot="formula">
+            <button class="preview-tab" data-shot="formula">
               <span>03</span>
-              <div>
-                <strong>Formula Desk</strong>
-                <small>LaTeX / MathML tools</small>
-              </div>
+              <strong>Formula Desk</strong>
+              <small>LaTeX + MathML copy</small>
             </button>
-            <button class="thumb" data-shot="mermaid">
+            <button class="preview-tab" data-shot="mermaid">
               <span>04</span>
-              <div>
-                <strong>Mermaid Workspace</strong>
-                <small>Preview + jump source</small>
-              </div>
+              <strong>Mermaid Desk</strong>
+              <small>Preview + source jump</small>
             </button>
           </aside>
         </div>
       </section>
 
       <section class="section reveal">
-        <div class="section-head">
-          <p class="overline">FEATURED CAPABILITIES</p>
-          <h2>Built for high-frequency ChatGPT users</h2>
+        <div class="section-title">
+          <p class="kicker">HIGHLIGHTS</p>
+          <h2>What makes it useful every day</h2>
         </div>
-        <div class="feature-grid">
+        <div class="feature-rack">
           <article>
-            <h3>Conversation Index</h3>
-            <p>Persistent local index for fast retrieval and long-term project memory.</p>
+            <h3>Bulk operations</h3>
+            <p>Move and tag multiple chats with undo support.</p>
           </article>
           <article>
-            <h3>Prompt Reuse Engine</h3>
-            <p>Save prompt snippets, group by tags, and inject variables in seconds.</p>
+            <h3>Prompt templates</h3>
+            <p>Reusable snippets with variable placeholders.</p>
           </article>
           <article>
-            <h3>Export & Backup</h3>
-            <p>Export to Markdown/HTML and maintain JSON backups under your control.</p>
+            <h3>Conversation export</h3>
+            <p>Markdown and HTML output for archiving.</p>
           </article>
           <article>
-            <h3>Batch Actions</h3>
-            <p>Bulk assign folders and labels with an undo-safe workflow.</p>
+            <h3>Math workspace</h3>
+            <p>Collect formulas and copy to LaTeX or MathML.</p>
           </article>
           <article>
-            <h3>Formula Toolkit</h3>
-            <p>Extract formulas from messages and copy in LaTeX/MathML formats.</p>
+            <h3>Mermaid workspace</h3>
+            <p>Detect and render diagram code blocks fast.</p>
           </article>
           <article>
-            <h3>Mermaid Preview</h3>
-            <p>Render diagrams instantly and jump to original message context.</p>
+            <h3>Local backup</h3>
+            <p>Export/import JSON for portable data migration.</p>
           </article>
         </div>
       </section>
 
       <section id="changelog" class="section reveal">
-        <div class="section-head">
-          <p class="overline">CHANGELOG</p>
-          <h2>Recent updates</h2>
+        <div class="section-title">
+          <p class="kicker">CHANGELOG</p>
+          <h2>Release timeline</h2>
         </div>
-        <div class="log-list">
+        <div class="timeline">
           <article>
-            <div class="tag">v0.1.0</div>
-            <h3>Initial release</h3>
-            <p>Core sidebar injection, conversation index, classification, export, settings, and knowledge tooling.</p>
+            <p class="version">v0.1.2</p>
+            <h3>Math + Mermaid quality pass</h3>
+            <p>Formula copy workflow and diagram workspace interactions were refined.</p>
           </article>
           <article>
-            <div class="tag">v0.1.1</div>
-            <h3>Prompt and timeline upgrades</h3>
-            <p>Prompt tags, variable templates, timeline navigation, and node-level export improvements.</p>
+            <p class="version">v0.1.1</p>
+            <h3>Prompt system upgrades</h3>
+            <p>Prompt tags, variable templates, and timeline export behavior improved.</p>
           </article>
           <article>
-            <div class="tag">v0.1.2</div>
-            <h3>Math and diagram workflow polish</h3>
-            <p>Formula copy refinements, Mermaid workspace preview, and interaction quality upgrades.</p>
+            <p class="version">v0.1.0</p>
+            <h3>Initial shipping version</h3>
+            <p>Sidebar, index, classification, export, settings, and core tooling are available.</p>
           </article>
         </div>
       </section>
 
       <section id="faq" class="section reveal">
-        <div class="section-head">
-          <p class="overline">FAQ</p>
-          <h2>Questions before install</h2>
+        <div class="section-title">
+          <p class="kicker">FAQ</p>
+          <h2>Before you install</h2>
         </div>
-        <div class="faq-list">
+        <div class="faq-grid">
           <details>
-            <summary>Does GPT Voyager send my chats to external servers?</summary>
-            <p>No. Current implementation is local-first and stores data in browser local storage by default.</p>
-          </details>
-          <details>
-            <summary>Which browsers are supported?</summary>
-            <p>Chromium-based browsers (Chrome and Edge) with Manifest V3 support.</p>
-          </details>
-          <details>
-            <summary>Can I migrate data between devices?</summary>
-            <p>Yes. Export JSON backup from one device and import it on another device.</p>
+            <summary>Will my chat data be sent to external servers?</summary>
+            <p>No. Current behavior is local-first and persists extension data locally in your browser.</p>
           </details>
           <details>
             <summary>How do I load the extension manually?</summary>
-            <p>Build project, open <code>chrome://extensions</code>, enable developer mode, then load <code>dist/</code>.</p>
+            <p>Run build, open <code>chrome://extensions</code>, enable developer mode, then load <code>dist/</code>.</p>
+          </details>
+          <details>
+            <summary>Can I migrate data to another device?</summary>
+            <p>Yes. Use JSON export/import to move index, prompts, settings, and favorites across devices.</p>
+          </details>
+          <details>
+            <summary>Which browsers are supported?</summary>
+            <p>Chromium browsers with Manifest V3 support, mainly Chrome and Edge.</p>
           </details>
         </div>
       </section>
 
       <section id="download" class="section reveal">
-        <div class="download-card">
+        <article class="download-panel">
           <div>
-            <p class="overline">DOWNLOAD</p>
-            <h2>Install GPT Voyager in 3 minutes</h2>
-            <p>Use source install now, or open the repository for release artifacts and updates.</p>
+            <p class="kicker">DOWNLOAD</p>
+            <h2>Ready to install GPT Voyager?</h2>
+            <p>Grab source zip or open the repository for commits, docs, and releases.</p>
           </div>
           <div class="download-actions">
-            <a class="btn btn-solid" href="https://github.com/Duang777/GPT/archive/refs/heads/main.zip">
+            <a class="btn btn-primary" href="https://github.com/Duang777/GPT/archive/refs/heads/main.zip">
               Download Source ZIP
             </a>
-            <a class="btn btn-ghost" href="https://github.com/Duang777/GPT" target="_blank" rel="noreferrer">
-              Open Repository
+            <a class="btn btn-outline" href="https://github.com/Duang777/GPT" target="_blank" rel="noreferrer">
+              View Repository
             </a>
-            <a class="btn btn-ghost" href="https://duang777.github.io/GPT/" target="_blank" rel="noreferrer">
-              Visit Live Site
+            <a class="btn btn-outline" href="https://duang777.github.io/GPT/" target="_blank" rel="noreferrer">
+              Open Live Site
             </a>
           </div>
-        </div>
+        </article>
       </section>
     </main>
 
     <footer class="footer reveal">
-      <p>GPT Voyager - Build Focused, Ship Faster</p>
-      <a href="https://github.com/Duang777/GPT" target="_blank" rel="noreferrer">GitHub: Duang777/GPT</a>
+      <p>GPT Voyager | Build focused, ship faster.</p>
+      <a href="https://github.com/Duang777/GPT" target="_blank" rel="noreferrer">github.com/Duang777/GPT</a>
     </footer>
 
     <script src="./script.js"></script>
