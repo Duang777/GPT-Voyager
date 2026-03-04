@@ -30,11 +30,6 @@ body {
   overflow-x: hidden;
 }
 
-.bg-layer,
-.grain {
-  display: none;
-}
-
 .topbar {
   position: sticky;
   top: 0.7rem;
@@ -307,7 +302,6 @@ main,
   background: var(--surface);
   padding: 0.82rem;
   box-shadow: var(--shadow);
-  transition: transform 0.22s ease;
 }
 
 .browser-shell {

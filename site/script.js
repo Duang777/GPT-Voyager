@@ -33,7 +33,6 @@ const previewText = document.getElementById("previewText");
 const previewPoints = document.getElementById("previewPoints");
 
 let currentIndex = 0;
-let rotationTimer = null;
 
 function applyPreview(key) {
   const data = previews[key];
@@ -64,57 +63,20 @@ function setActiveTab(nextIndex) {
   }
 }
 
-function startRotation() {
-  if (!tabs.length) {
-    return;
-  }
-
-  stopRotation();
-  rotationTimer = window.setInterval(() => {
-    setActiveTab(currentIndex + 1);
-  }, 5200);
-}
-
-function stopRotation() {
-  if (rotationTimer === null) {
-    return;
-  }
-  window.clearInterval(rotationTimer);
-  rotationTimer = null;
-}
-
 tabs.forEach((tab, index) => {
   tab.addEventListener("click", () => {
     setActiveTab(index);
-    startRotation();
   });
 });
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "ArrowRight") {
     setActiveTab(currentIndex + 1);
-    startRotation();
   }
   if (event.key === "ArrowLeft") {
     setActiveTab(currentIndex - 1);
-    startRotation();
   }
 });
-
-if (previewStage) {
-  previewStage.addEventListener("mousemove", (event) => {
-    const rect = previewStage.getBoundingClientRect();
-    const x = (event.clientX - rect.left) / rect.width;
-    const y = (event.clientY - rect.top) / rect.height;
-    const tiltX = (0.5 - y) * 2.2;
-    const tiltY = (x - 0.5) * 2.2;
-    previewStage.style.transform = `perspective(1200px) rotateX(${tiltX}deg) rotateY(${tiltY}deg)`;
-  });
-
-  previewStage.addEventListener("mouseleave", () => {
-    previewStage.style.transform = "";
-  });
-}
 
 const revealObserver = new IntersectionObserver(
   (entries) => {
@@ -138,4 +100,3 @@ document.querySelectorAll(".reveal").forEach((node, index) => {
 });
 
 setActiveTab(0);
-startRotation();
