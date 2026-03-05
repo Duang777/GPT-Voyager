@@ -100,6 +100,16 @@ type PanelState = {
 };
 
 type ViewKey = "conversations" | "prompts" | "guide" | "settings";
+type ConversationWorkspaceKey =
+  | "home"
+  | "overview"
+  | "export"
+  | "starred"
+  | "timeline"
+  | "formula"
+  | "mermaid"
+  | "classification"
+  | "index";
 
 type SelectOption<Value extends string> = {
   value: Value;
@@ -153,12 +163,47 @@ const EXTENSION_HOST_ID = "gpt-voyager-host";
 const TIMELINE_HIGHLIGHT_STYLE_ID = "gpt-voyager-timeline-highlight-style";
 const TIMELINE_HIGHLIGHT_ATTR = "data-gv-timeline-highlighted";
 const CHAT_WIDTH_STYLE_ID = "gpt-voyager-chat-content-width-style";
-const CONVERSATION_ROW_HEIGHT_COMPACT = 150;
+const CONVERSATION_ROW_HEIGHT_COMPACT = 174;
+const CONVERSATION_ROW_HEIGHT_MINIMAL = 164;
 const CONVERSATION_ROW_HEIGHT_STANDARD = 188;
 const CONVERSATION_VIRTUAL_OVERSCAN = 6;
 const CONVERSATION_LIST_FALLBACK_HEIGHT = 520;
 const QUOTE_REPLY_BADGE_ID = "gpt-voyager-quote-reply-badge";
 const EMPTY_META: ConversationClassificationMeta = { tagIds: [] };
+const CONVERSATION_WORKSPACE_LABELS: Record<Exclude<ConversationWorkspaceKey, "home">, string> = {
+  overview: "总览",
+  export: "导出中心",
+  starred: "星标会话",
+  timeline: "会话时间线",
+  formula: "公式工作台",
+  mermaid: "Mermaid 工作台",
+  classification: "分类管理",
+  index: "会话索引"
+};
+const CONVERSATION_SORT_OPTIONS: Array<SelectOption<ConversationSortMode>> = [
+  { value: "recent_desc", label: "按最近活跃" },
+  { value: "title_asc", label: "按标题 A-Z" }
+];
+const CONVERSATION_DENSITY_OPTIONS: Array<SelectOption<ConversationCardDensity>> = [
+  { value: "standard", label: "标准" },
+  { value: "compact", label: "紧凑" },
+  { value: "minimal", label: "极简紧凑" }
+];
+const SCAN_INTERVAL_OPTIONS: Array<SelectOption<string>> = [
+  { value: "2", label: "2" },
+  { value: "5", label: "5" },
+  { value: "10", label: "10" },
+  { value: "20", label: "20" },
+  { value: "30", label: "30" }
+];
+const PROMPT_INSERT_MODE_OPTIONS: Array<SelectOption<UserSettings["promptInsertMode"]>> = [
+  { value: "append", label: "追加到输入框" },
+  { value: "replace", label: "覆盖输入框" }
+];
+const DEFAULT_EXPORT_FORMAT_OPTIONS: Array<SelectOption<UserSettings["defaultExportFormat"]>> = [
+  { value: "markdown", label: "Markdown" },
+  { value: "html", label: "HTML" }
+];
 
 function resolveActiveStorageScope(settings: UserSettings, detected: AccountScopeInfo): string {
   if (!settings.accountIsolationEnabled) {
@@ -1035,74 +1080,184 @@ function buildMermaidHtmlDocument(title: string, code: string, svg: string): str
 </html>`;
 }
 
-function InlineSelect<Value extends string>(props: {
+function VoyagerSelect<Value extends string>(props: {
   value: Value;
   options: Array<SelectOption<Value>>;
   onChange: (value: Value) => void;
   ariaLabel: string;
+  className?: string;
 }): React.ReactElement {
-  const { value, options, onChange, ariaLabel } = props;
-  const [open, setOpen] = useState(false);
+  const { value, options, onChange, ariaLabel, className } = props;
   const rootRef = useRef<HTMLDivElement>(null);
-  const selected = options.find((item) => item.value === value) ?? options[0];
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({
+    top: 0,
+    left: 0,
+    width: 160,
+    maxHeight: 220
+  });
+
+  const selectedOption = options.find((item) => item.value === value) ?? options[0];
+  const syncMenuPosition = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) {
+      return;
+    }
+    const rect = trigger.getBoundingClientRect();
+    const menuWidth = Math.max(140, Math.round(rect.width));
+    const viewportPadding = 8;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const left = Math.min(
+      viewportWidth - menuWidth - viewportPadding,
+      Math.max(viewportPadding, Math.round(rect.left))
+    );
+    const spaceBelow = viewportHeight - rect.bottom - viewportPadding;
+    const spaceAbove = rect.top - viewportPadding;
+    const openUpward = spaceBelow < 150 && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(120, Math.min(260, openUpward ? spaceAbove - 8 : spaceBelow - 8));
+    const top = openUpward ? rect.top - maxHeight - 6 : rect.bottom + 6;
+
+    setMenuStyle({
+      top: Math.max(viewportPadding, Math.round(top)),
+      left: Math.max(viewportPadding, Math.round(left)),
+      width: menuWidth,
+      maxHeight
+    });
+  }, []);
 
   useEffect(() => {
     if (!open) {
       return;
     }
+    syncMenuPosition();
+
     const onPointerDown = (event: PointerEvent) => {
-      if (!(event.target instanceof Node)) {
+      const target = event.target;
+      const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+      if (
+        rootRef.current &&
+        ((path.length > 0 && path.includes(rootRef.current)) || (target instanceof Node && rootRef.current.contains(target)))
+      ) {
         return;
       }
-      if (!rootRef.current?.contains(event.target)) {
-        setOpen(false);
-      }
+      setOpen(false);
     };
-    const onEscape = (event: KeyboardEvent) => {
+    const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setOpen(false);
+        triggerRef.current?.focus();
       }
     };
+    const onViewportChange = () => {
+      syncMenuPosition();
+    };
+
     window.addEventListener("pointerdown", onPointerDown, true);
-    window.addEventListener("keydown", onEscape, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("resize", onViewportChange, true);
+    document.addEventListener("scroll", onViewportChange, true);
     return () => {
       window.removeEventListener("pointerdown", onPointerDown, true);
-      window.removeEventListener("keydown", onEscape, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("resize", onViewportChange, true);
+      document.removeEventListener("scroll", onViewportChange, true);
     };
-  }, [open]);
+  }, [open, syncMenuPosition]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const currentIndex = Math.max(
+      0,
+      options.findIndex((item) => item.value === value)
+    );
+    const timeoutId = window.setTimeout(() => {
+      optionRefs.current[currentIndex]?.focus();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [open, options, value]);
 
   return (
-    <div className="gv-inline-select" ref={rootRef}>
+    <div className={`gv-select-shell ${className ?? ""}`} ref={rootRef}>
       <button
-        className={`gv-inline-select-btn ${open ? "gv-inline-select-btn-open" : ""}`}
+        className={`gv-select-trigger ${open ? "gv-select-trigger-open" : ""}`}
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={ariaLabel}
-        onClick={() => setOpen((previous) => !previous)}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen((previous) => !previous);
+        }}
+        onPointerDown={(event) => {
+          event.stopPropagation();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Tab") {
+            setOpen(false);
+            return;
+          }
+          if (event.key === "Enter" || event.key === " " || event.key === "ArrowDown") {
+            event.preventDefault();
+            setOpen(true);
+          }
+        }}
+        ref={triggerRef}
       >
-        <span>{selected?.label ?? ""}</span>
-        <span className={`gv-inline-select-arrow ${open ? "gv-inline-select-arrow-open" : ""}`} aria-hidden="true">
+        <span className="gv-select-trigger-value">{selectedOption?.label ?? ""}</span>
+        <span className={`gv-select-trigger-arrow ${open ? "gv-select-trigger-arrow-open" : ""}`} aria-hidden="true">
           ▾
         </span>
       </button>
       {open ? (
-        <div className="gv-inline-select-menu" role="listbox" aria-label={ariaLabel}>
-          {options.map((item) => (
-            <button
-              key={item.value}
-              className={`gv-inline-select-option ${item.value === value ? "gv-inline-select-option-active" : ""}`}
-              type="button"
-              role="option"
-              aria-selected={item.value === value}
-              onClick={() => {
-                onChange(item.value);
-                setOpen(false);
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
+        <div className="gv-select-menu" style={menuStyle} role="listbox" aria-label={ariaLabel} ref={menuRef}>
+          {options.map((option, index) => {
+            const active = option.value === value;
+            return (
+              <button
+                key={option.value}
+                className={`gv-select-option ${active ? "gv-select-option-active" : ""}`}
+                type="button"
+                role="option"
+                aria-selected={active}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onChange(option.value);
+                  setOpen(false);
+                  triggerRef.current?.focus();
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Tab") {
+                    setOpen(false);
+                    return;
+                  }
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    optionRefs.current[index + 1]?.focus();
+                  } else if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    if (index === 0) {
+                      triggerRef.current?.focus();
+                      return;
+                    }
+                    optionRefs.current[index - 1]?.focus();
+                  }
+                }}
+                ref={(node) => {
+                  optionRefs.current[index] = node;
+                }}
+              >
+                {option.label}
+              </button>
+            );
+          })}
         </div>
       ) : null}
     </div>
@@ -1114,6 +1269,7 @@ export function App(): React.ReactElement {
   const [collapsed, setCollapsed] = useState(false);
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const [activeView, setActiveView] = useState<ViewKey>("conversations");
+  const [conversationWorkspace, setConversationWorkspace] = useState<ConversationWorkspaceKey>("home");
 
   const [indexReady, setIndexReady] = useState(false);
   const [classificationReady, setClassificationReady] = useState(false);
@@ -1166,6 +1322,7 @@ export function App(): React.ReactElement {
   const [batchTagId, setBatchTagId] = useState("");
   const [batchPanelExpanded, setBatchPanelExpanded] = useState(false);
   const [lastBatchUndo, setLastBatchUndo] = useState<BatchUndoSnapshot | null>(null);
+  const [minimalExpandedConversationId, setMinimalExpandedConversationId] = useState("");
   const [conversationStatus, setConversationStatus] = useState("");
   const [visibleCount, setVisibleCount] = useState(0);
   const [conversationIndex, setConversationIndex] = useState<ConversationEntry[]>([]);
@@ -1200,11 +1357,95 @@ export function App(): React.ReactElement {
   const timelineHighlightedElementsRef = useRef<HTMLElement[]>([]);
   const formulaNodeMapRef = useRef<Record<string, HTMLElement>>({});
   const mermaidNodeMapRef = useRef<Record<string, HTMLElement>>({});
+  const derivedRefreshRafRef = useRef(0);
   const activeConversationId = getCurrentConversationId();
   const activeStorageScope = useMemo(
     () => resolveActiveStorageScope(settings, detectedAccountScope),
     [detectedAccountScope, settings]
   );
+  const starredConversationMetric = useMemo(() => {
+    let count = 0;
+    for (const item of conversationIndex) {
+      if (classificationState.metaByConversationId[item.id]?.starred) {
+        count += 1;
+      }
+    }
+    return count;
+  }, [classificationState.metaByConversationId, conversationIndex]);
+  const activeConversationWorkspaceLabel = useMemo(() => {
+    if (conversationWorkspace === "home") {
+      return "";
+    }
+    return CONVERSATION_WORKSPACE_LABELS[conversationWorkspace];
+  }, [conversationWorkspace]);
+  const conversationWorkspaceCards = useMemo<Array<{
+    key: Exclude<ConversationWorkspaceKey, "home">;
+    title: string;
+    metric: string;
+    description: string;
+  }>>(
+    () => [
+      {
+        key: "overview",
+        title: "总览",
+        metric: `${visibleCount} / ${conversationIndex.length}`,
+        description: "查看当前可见会话、索引总量与星标入口。"
+      },
+      {
+        key: "export",
+        title: "导出中心",
+        metric: "MD / HTML / PDF",
+        description: "导出当前会话，支持直接下载与失败回退。"
+      },
+      {
+        key: "starred",
+        title: "星标会话",
+        metric: `${starredConversationMetric} 条`,
+        description: "快速查看和打开你标记过的重要会话。"
+      },
+      {
+        key: "timeline",
+        title: "会话时间线",
+        metric: `${timelineItems.length} 条`,
+        description: "按消息时间线定位、标注和导出节点。"
+      },
+      {
+        key: "formula",
+        title: "公式工作台",
+        metric: `${formulaItems.length} 个`,
+        description: "复制 LaTeX / Word 公式，收藏并回溯来源。"
+      },
+      {
+        key: "mermaid",
+        title: "Mermaid 工作台",
+        metric: `${mermaidItems.length} 个`,
+        description: "预览图表、复制源码并导出 SVG/HTML。"
+      },
+      {
+        key: "classification",
+        title: "分类管理",
+        metric: `${classificationState.folders.length} 夹 / ${classificationState.tags.length} 标签`,
+        description: "维护文件夹与标签体系，统一会话分类标准。"
+      },
+      {
+        key: "index",
+        title: "会话索引",
+        metric: `${conversationIndex.length} 条`,
+        description: "搜索、筛选、批量处理和虚拟滚动索引列表。"
+      }
+    ],
+    [
+      classificationState.folders.length,
+      classificationState.tags.length,
+      conversationIndex.length,
+      formulaItems.length,
+      mermaidItems.length,
+      starredConversationMetric,
+      timelineItems.length,
+      visibleCount
+    ]
+  );
+  const shouldObserveConversationWorkspace = panelReady && !collapsed && activeView === "conversations";
 
   const timelineRoleFilterOptions = useMemo<Array<SelectOption<"all" | TimelineRole>>>(
     () => [
@@ -1383,6 +1624,12 @@ export function App(): React.ReactElement {
   }, []);
 
   useEffect(() => {
+    if (!shouldObserveConversationWorkspace) {
+      return () => {
+        // 面板未展开或不在会话工作台时，不启动自动扫描，减少页面负担。
+      };
+    }
+
     if (!settings.autoScanEnabled) {
       const visibleConversations = collectVisibleConversations(document);
       setVisibleCount(visibleConversations.length);
@@ -1399,7 +1646,7 @@ export function App(): React.ReactElement {
       intervalMs: settings.scanIntervalSec * 1000
     });
     return () => stopObserve();
-  }, [settings.autoScanEnabled, settings.scanIntervalSec]);
+  }, [settings.autoScanEnabled, settings.scanIntervalSec, shouldObserveConversationWorkspace]);
 
   useEffect(() => {
     if (!indexReady || indexLoadedScope !== activeStorageScope) {
@@ -2111,10 +2358,24 @@ export function App(): React.ReactElement {
   }, [activeConversationId, conversationIndex, formulaItems, jumpToFormulaItem, refreshConversationFormulas]);
 
   const refreshConversationDerivedData = useCallback(() => {
-    refreshConversationTimeline();
-    refreshConversationFormulas();
-    refreshConversationMermaid();
+    if (derivedRefreshRafRef.current !== 0) {
+      return;
+    }
+    derivedRefreshRafRef.current = window.requestAnimationFrame(() => {
+      derivedRefreshRafRef.current = 0;
+      refreshConversationTimeline();
+      refreshConversationFormulas();
+      refreshConversationMermaid();
+    });
   }, [refreshConversationFormulas, refreshConversationMermaid, refreshConversationTimeline]);
+
+  useEffect(() => {
+    return () => {
+      if (derivedRefreshRafRef.current !== 0) {
+        window.cancelAnimationFrame(derivedRefreshRafRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     setTimelineActiveId("");
@@ -2130,16 +2391,19 @@ export function App(): React.ReactElement {
     setMermaidQuery("");
     setMermaidSvgById({});
     setMermaidErrorById({});
+    if (!shouldObserveConversationWorkspace) {
+      return;
+    }
     refreshConversationDerivedData();
-  }, [activeConversationId, refreshConversationDerivedData]);
+  }, [activeConversationId, refreshConversationDerivedData, shouldObserveConversationWorkspace]);
 
   useEffect(() => {
-    if (!activeConversationId) {
+    if (!activeConversationId || !shouldObserveConversationWorkspace) {
       return;
     }
     const stopObserve = observeConversationThread(refreshConversationDerivedData, { intervalMs: 1400 });
     return () => stopObserve();
-  }, [activeConversationId, refreshConversationDerivedData]);
+  }, [activeConversationId, refreshConversationDerivedData, shouldObserveConversationWorkspace]);
 
   useEffect(() => {
     if (document.getElementById(TIMELINE_HIGHLIGHT_STYLE_ID)) {
@@ -2779,13 +3043,18 @@ export function App(): React.ReactElement {
     setExportStatus(`HTML 已导出（${result.messageCount} 条）`);
   }, []);
 
-  const exportConversationPdf = useCallback(() => {
-    const result = exportCurrentConversationToPdf();
+  const exportConversationPdf = useCallback(async () => {
+    setExportStatus("PDF 导出中，请稍候...");
+    const result = await exportCurrentConversationToPdf();
     if (!result.ok) {
       setExportStatus(result.reason);
       return;
     }
-    setExportStatus(`已打开 PDF 打印窗口（${result.messageCount} 条，含图片）`);
+    if (result.mode === "print_fallback") {
+      setExportStatus(result.warning ?? "直接下载失败，已打开打印页，请在打印窗口选择“另存为 PDF”");
+      return;
+    }
+    setExportStatus(`PDF 已导出（${result.messageCount} 条，含图片）`);
   }, []);
 
   const exportConversationDefault = useCallback(() => {
@@ -3224,7 +3493,11 @@ main form [class*="max-w"] {
   }, [filteredConversations, settings.conversationSortMode]);
 
   const conversationVirtualRowHeight =
-    settings.conversationCardDensity === "compact" ? CONVERSATION_ROW_HEIGHT_COMPACT : CONVERSATION_ROW_HEIGHT_STANDARD;
+    settings.conversationCardDensity === "compact"
+      ? CONVERSATION_ROW_HEIGHT_COMPACT
+      : settings.conversationCardDensity === "minimal"
+        ? CONVERSATION_ROW_HEIGHT_MINIMAL
+        : CONVERSATION_ROW_HEIGHT_STANDARD;
 
   const conversationVirtualWindow = useMemo(() => {
     if (orderedConversations.length === 0) {
@@ -3303,7 +3576,22 @@ main form [class*="max-w"] {
       listElement.scrollTop = 0;
     }
     setConversationListScrollTop(0);
+    setMinimalExpandedConversationId("");
   }, [folderFilter, normalizedQuery, settings.conversationCardDensity, settings.conversationSortMode, starredOnly, tagFilter]);
+
+  useEffect(() => {
+    if (settings.conversationCardDensity !== "minimal") {
+      setMinimalExpandedConversationId("");
+      return;
+    }
+    if (!minimalExpandedConversationId) {
+      return;
+    }
+    const exists = orderedConversations.some((item) => item.id === minimalExpandedConversationId);
+    if (!exists) {
+      setMinimalExpandedConversationId("");
+    }
+  }, [minimalExpandedConversationId, orderedConversations, settings.conversationCardDensity]);
 
   const handleConversationListScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
     setConversationListScrollTop(event.currentTarget.scrollTop);
@@ -3334,6 +3622,11 @@ main form [class*="max-w"] {
     setFolderFilter(target);
     setConversationStatus("已打开对应文件夹会话");
   }, []);
+
+  const enterFolderFromClassification = useCallback((target: "all" | "uncategorized" | string) => {
+    openFolderView(target);
+    setConversationWorkspace("index");
+  }, [openFolderView]);
 
   const selectedConversationIdSet = useMemo(() => new Set(selectedConversationIds), [selectedConversationIds]);
   const selectedConversationCount = selectedConversationIds.length;
@@ -3842,7 +4135,10 @@ main form [class*="max-w"] {
               <button
                 className={`gv-nav-btn ${activeView === "conversations" ? "gv-nav-btn-active" : ""}`}
                 type="button"
-                onClick={() => setActiveView("conversations")}
+                onClick={() => {
+                  setActiveView("conversations");
+                  setConversationWorkspace("home");
+                }}
               >
                 会话工作台
               </button>
@@ -3869,16 +4165,75 @@ main form [class*="max-w"] {
               </button>
             </nav>
 
-            <div className="gv-view-intro" aria-live="polite">
-              <span className="gv-view-kicker">{activeViewMeta.kicker}</span>
-              <h2>{activeViewMeta.title}</h2>
-              <p>{activeViewMeta.description}</p>
-            </div>
+            {activeView !== "conversations" ? (
+              <div className="gv-view-intro" aria-live="polite">
+                <span className="gv-view-kicker">{activeViewMeta.kicker}</span>
+                <h2>{activeViewMeta.title}</h2>
+                <p>{activeViewMeta.description}</p>
+              </div>
+            ) : null}
           </div>
 
           {activeView === "conversations" ? (
             <>
-          <section className="gv-section gv-section-highlight">
+          <section className="gv-section gv-workspace-hub">
+            <div className="gv-section-title-row">
+              <h2>工作台入口</h2>
+              <div className="gv-actions-inline">
+                {conversationWorkspace !== "home" ? (
+                  <button className="gv-mini-btn" type="button" onClick={() => setConversationWorkspace("home")}>
+                    返回入口
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            {conversationWorkspace === "home" ? (
+              <>
+                <p className="gv-metric">每个能力单独成卡片，点击进入对应子工作台，避免信息堆叠。</p>
+                <div className="gv-workspace-grid">
+                  {conversationWorkspaceCards.map((card) => (
+                    <button
+                      key={card.key}
+                      className="gv-workspace-card"
+                      type="button"
+                      onClick={() => setConversationWorkspace(card.key)}
+                    >
+                      <span className="gv-workspace-card-title">{card.title}</span>
+                      <span className="gv-workspace-card-metric">{card.metric}</span>
+                      <span className="gv-workspace-card-desc">{card.description}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="gv-metric">{`当前模块：${activeConversationWorkspaceLabel}`}</p>
+            )}
+          </section>
+
+          <div className={`gv-workspace-panels gv-workspace-mode-${conversationWorkspace}`}>
+          <section className="gv-section gv-section-export" data-gv-workspace="export">
+            <div className="gv-section-title-row">
+              <h2>导出中心</h2>
+              <div className="gv-actions-inline gv-actions-inline-export">
+                <button className="gv-mini-btn" type="button" onClick={exportConversationDefault}>
+                  快速导出
+                </button>
+                <button className="gv-mini-btn" type="button" onClick={exportConversationMarkdown}>
+                  导出 MD
+                </button>
+                <button className="gv-mini-btn" type="button" onClick={exportConversationHtml}>
+                  导出 HTML
+                </button>
+                <button className="gv-mini-btn" type="button" onClick={() => void exportConversationPdf()}>
+                  导出 PDF
+                </button>
+              </div>
+            </div>
+            <p className="gv-metric">当前会话可一键导出 Markdown / HTML / PDF（PDF 为直接下载）。</p>
+            {exportStatus ? <p className="gv-export-status">{exportStatus}</p> : null}
+          </section>
+
+          <section className="gv-section gv-section-highlight" data-gv-workspace="overview">
             <div className="gv-stat-grid">
               <div className="gv-stat-item">
                 <span>当前可见</span>
@@ -3914,7 +4269,7 @@ main form [class*="max-w"] {
             </button>
           </section>
 
-          <section className="gv-section">
+          <section className="gv-section" data-gv-workspace="starred">
             <div className="gv-section-title-row">
               <h2>星标会话</h2>
               <div className="gv-actions-inline">
@@ -3955,7 +4310,7 @@ main form [class*="max-w"] {
             )}
           </section>
 
-          <section className="gv-section">
+          <section className="gv-section" data-gv-workspace="timeline">
             <div className="gv-section-title-row">
               <h2>会话时间线</h2>
               <div className="gv-actions-inline">
@@ -3993,25 +4348,21 @@ main form [class*="max-w"] {
                   aria-label="搜索时间线"
                 />
                 <div className="gv-filter-row">
-                  <InlineSelect
-                    ariaLabel="筛选角色"
+                  <VoyagerSelect
                     value={timelineRoleFilter}
                     options={timelineRoleFilterOptions}
-                    onChange={setTimelineRoleFilter}
+                    onChange={(nextValue) => setTimelineRoleFilter(nextValue)}
+                    ariaLabel="筛选角色"
                   />
-                  <select
-                    className="gv-select"
+                  <VoyagerSelect
                     value={timelineTagFilter}
-                    onChange={(event) => setTimelineTagFilter(event.target.value)}
-                    aria-label="筛选时间线标签"
-                  >
-                    <option value="all">全部标签</option>
-                    {timelineTagOptions.map((tag) => (
-                      <option key={tag} value={tag}>
-                        {tag}
-                      </option>
-                    ))}
-                  </select>
+                    options={[
+                      { value: "all", label: "全部标签" },
+                      ...timelineTagOptions.map((tag) => ({ value: tag, label: tag }))
+                    ]}
+                    onChange={(nextValue) => setTimelineTagFilter(nextValue)}
+                    ariaLabel="筛选时间线标签"
+                  />
                   <button
                     className="gv-mini-btn"
                     type="button"
@@ -4130,7 +4481,7 @@ main form [class*="max-w"] {
             )}
           </section>
 
-          <section className="gv-section">
+          <section className="gv-section" data-gv-workspace="formula">
             <div className="gv-section-title-row">
               <h2>公式工作台</h2>
               <div className="gv-actions-inline">
@@ -4171,11 +4522,11 @@ main form [class*="max-w"] {
                   aria-label="搜索公式"
                 />
                 <div className="gv-filter-row gv-filter-row-compact">
-                  <InlineSelect
-                    ariaLabel="筛选公式类型"
+                  <VoyagerSelect
                     value={formulaDisplayFilter}
                     options={formulaDisplayFilterOptions}
-                    onChange={setFormulaDisplayFilter}
+                    onChange={(nextValue) => setFormulaDisplayFilter(nextValue)}
+                    ariaLabel="筛选公式类型"
                   />
                   <button
                     className="gv-mini-btn"
@@ -4295,7 +4646,7 @@ main form [class*="max-w"] {
             )}
           </section>
 
-          <section className="gv-section">
+          <section className="gv-section" data-gv-workspace="mermaid">
             <div className="gv-section-title-row">
               <h2>Mermaid 工作台</h2>
               <div className="gv-actions-inline">
@@ -4456,8 +4807,60 @@ main form [class*="max-w"] {
               </>
             )}
           </section>
-          <section className="gv-section">
+          <section className="gv-section" data-gv-workspace="classification">
             <h2>分类管理</h2>
+            <p className="gv-metric">分类以单列列表展示，可直接进入对应会话列表。</p>
+            <div className="gv-folder-card-grid">
+              <div className={`gv-folder-card ${folderFilter === "all" && !starredOnly ? "gv-folder-card-active" : ""}`}>
+                <div className="gv-folder-card-head">
+                  <strong>全部会话</strong>
+                  <span>{conversationIndex.length} 条</span>
+                </div>
+                <div className="gv-folder-card-actions">
+                  <button className="gv-mini-btn" type="button" onClick={() => enterFolderFromClassification("all")}>
+                    进入
+                  </button>
+                </div>
+              </div>
+
+              <div className={`gv-folder-card ${folderFilter === "uncategorized" && !starredOnly ? "gv-folder-card-active" : ""}`}>
+                <div className="gv-folder-card-head">
+                  <strong>未分类</strong>
+                  <span>{uncategorizedConversationCount} 条</span>
+                </div>
+                <div className="gv-folder-card-actions">
+                  <button className="gv-mini-btn" type="button" onClick={() => enterFolderFromClassification("uncategorized")}>
+                    进入
+                  </button>
+                </div>
+              </div>
+
+              {classificationState.folders.map((folder) => (
+                <div
+                  className={`gv-folder-card ${folderFilter === folder.id && !starredOnly ? "gv-folder-card-active" : ""}`}
+                  key={`classification_folder_card_${folder.id}`}
+                >
+                  <div className="gv-folder-card-head">
+                    <strong>{folder.name}</strong>
+                    <span>{folderConversationCountMap.get(folder.id) ?? 0} 条</span>
+                  </div>
+                  <div className="gv-folder-card-actions">
+                    <button className="gv-mini-btn" type="button" onClick={() => enterFolderFromClassification(folder.id)}>
+                      进入
+                    </button>
+                    <button
+                      className="gv-mini-btn gv-danger-btn"
+                      type="button"
+                      onClick={() => removeFolder(folder.id)}
+                      aria-label={`删除文件夹 ${folder.name}`}
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
             <div className="gv-form-row">
               <input
                 className="gv-input"
@@ -4470,21 +4873,6 @@ main form [class*="max-w"] {
               <button className="gv-mini-btn" type="button" onClick={createFolder}>
                 添加
               </button>
-            </div>
-
-            <div className="gv-chip-wrap">
-              {classificationState.folders.length === 0 ? (
-                <span className="gv-inline-empty">暂无文件夹</span>
-              ) : (
-                classificationState.folders.map((folder) => (
-                  <span className="gv-chip" key={folder.id}>
-                    <span>{folder.name}</span>
-                    <button className="gv-chip-remove" type="button" onClick={() => removeFolder(folder.id)} aria-label={`删除文件夹 ${folder.name}`}>
-                      ×
-                    </button>
-                  </span>
-                ))
-              )}
             </div>
 
             <div className="gv-form-row">
@@ -4517,31 +4905,18 @@ main form [class*="max-w"] {
             </div>
           </section>
 
-          <section className="gv-section">
+          <section className="gv-section" data-gv-workspace="index">
             <div className="gv-section-title-row">
               <h2>会话索引</h2>
               <div className="gv-actions-inline">
                 <button className="gv-mini-btn" type="button" onClick={refreshVisibleConversations}>
                   重新扫描
                 </button>
-                <button className="gv-mini-btn" type="button" onClick={exportConversationDefault}>
-                  快速导出
-                </button>
-                <button className="gv-mini-btn" type="button" onClick={exportConversationMarkdown}>
-                  导出 MD
-                </button>
-                <button className="gv-mini-btn" type="button" onClick={exportConversationHtml}>
-                  导出 HTML
-                </button>
-                <button className="gv-mini-btn" type="button" onClick={exportConversationPdf}>
-                  导出 PDF
-                </button>
               </div>
             </div>
             <p className="gv-metric">
               当前可见 <strong>{visibleCount}</strong> 条，已索引 <strong>{conversationIndex.length}</strong> 条
             </p>
-            {exportStatus ? <p className="gv-export-status">{exportStatus}</p> : null}
             {conversationStatus ? <p className="gv-export-status">{conversationStatus}</p> : null}
 
             <input
@@ -4599,7 +4974,7 @@ main form [class*="max-w"] {
                 type="button"
                 onClick={() => setShowAdvancedFilters((previous) => !previous)}
               >
-                {showAdvancedFilters ? "收起高级筛选" : "高级筛选"}
+                {showAdvancedFilters ? "高级筛选 ▴" : "高级筛选 ▾"}
               </button>
               <button
                 className="gv-mini-btn"
@@ -4619,77 +4994,84 @@ main form [class*="max-w"] {
             <div className="gv-order-density-row">
               <label className="gv-order-density-item">
                 <span>排序</span>
-                <select
-                  className="gv-select"
+                <VoyagerSelect
                   value={settings.conversationSortMode}
-                  onChange={(event) =>
+                  options={CONVERSATION_SORT_OPTIONS}
+                  onChange={(nextValue) =>
                     setSettings((previous) => ({
                       ...previous,
-                      conversationSortMode: event.target.value as ConversationSortMode
+                      conversationSortMode: nextValue
                     }))
                   }
-                >
-                  <option value="recent_desc">按最近活跃</option>
-                  <option value="title_asc">按标题 A-Z</option>
-                </select>
+                  ariaLabel="会话排序"
+                />
               </label>
               <label className="gv-order-density-item">
                 <span>卡片密度</span>
-                <select
-                  className="gv-select"
+                <VoyagerSelect
                   value={settings.conversationCardDensity}
-                  onChange={(event) =>
+                  options={CONVERSATION_DENSITY_OPTIONS}
+                  onChange={(nextValue) =>
                     setSettings((previous) => ({
                       ...previous,
-                      conversationCardDensity: event.target.value as ConversationCardDensity
+                      conversationCardDensity: nextValue
                     }))
                   }
-                >
-                  <option value="standard">标准</option>
-                  <option value="compact">紧凑</option>
-                </select>
+                  ariaLabel="会话卡片密度"
+                />
               </label>
             </div>
 
             {showAdvancedFilters ? (
               <div className="gv-filter-advanced">
-                <select className="gv-select" value={folderFilter} onChange={(event) => setFolderFilter(event.target.value)}>
-                  <option value="all">全部文件夹</option>
-                  <option value="uncategorized">未分类</option>
-                  {classificationState.folders.map((folder) => (
-                    <option key={folder.id} value={folder.id}>
-                      {folder.name}
-                    </option>
-                  ))}
-                </select>
+                <label className="gv-filter-advanced-item">
+                  <span>文件夹</span>
+                  <VoyagerSelect
+                    value={folderFilter}
+                    options={[
+                      { value: "all", label: "全部文件夹" },
+                      { value: "uncategorized", label: "未分类" },
+                      ...classificationState.folders.map((folder) => ({ value: folder.id, label: folder.name }))
+                    ]}
+                    onChange={(nextValue) => setFolderFilter(nextValue)}
+                    ariaLabel="按文件夹筛选会话"
+                  />
+                </label>
 
-                <select className="gv-select" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>
-                  <option value="all">全部标签</option>
-                  {classificationState.tags.map((tag) => (
-                    <option key={tag.id} value={tag.id}>
-                      {tag.name}
-                    </option>
-                  ))}
-                </select>
+                <label className="gv-filter-advanced-item">
+                  <span>标签</span>
+                  <VoyagerSelect
+                    value={tagFilter}
+                    options={[
+                      { value: "all", label: "全部标签" },
+                      ...classificationState.tags.map((tag) => ({ value: tag.id, label: tag.name }))
+                    ]}
+                    onChange={(nextValue) => setTagFilter(nextValue)}
+                    ariaLabel="按标签筛选会话"
+                  />
+                </label>
               </div>
             ) : null}
 
-            <div className="gv-batch-panel">
+            <div className={`gv-batch-panel ${batchPanelExpanded ? "gv-batch-panel-expanded" : ""}`}>
               <div className="gv-batch-head">
-                <span>{`已选择 ${selectedConversationCount} 条`}</span>
+                <div className="gv-batch-head-main">
+                  <strong>批量操作</strong>
+                  <span>{`已选择 ${selectedConversationCount} 条`}</span>
+                </div>
                 <div className="gv-actions-inline">
                   <button
                     className={`gv-mini-btn ${batchPanelExpanded ? "gv-mini-btn-active" : ""}`}
                     type="button"
                     onClick={() => setBatchPanelExpanded((previous) => !previous)}
                   >
-                    {batchPanelExpanded ? "收起批量" : "展开批量"}
+                    {batchPanelExpanded ? "批量操作 ▴" : "批量操作 ▾"}
                   </button>
                 </div>
               </div>
 
               {batchPanelExpanded ? (
-                <>
+                <div className="gv-batch-body">
                   <div className="gv-batch-quick">
                     <button className="gv-mini-btn" type="button" onClick={selectAllFilteredConversations}>
                       全选当前筛选
@@ -4713,43 +5095,63 @@ main form [class*="max-w"] {
                       : "快捷键：Ctrl/⌘ + Shift + B 全选，Ctrl/⌘ + Shift + N 清空，Ctrl/⌘ + Shift + Z 撤销"}
                   </p>
                   <div className="gv-batch-grid">
-                    <select className="gv-select" value={batchFolderId} onChange={(event) => setBatchFolderId(event.target.value)}>
-                      <option value="">未分类</option>
-                      {classificationState.folders.map((folder) => (
-                        <option key={`batch_folder_${folder.id}`} value={folder.id}>
-                          {folder.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button className="gv-mini-btn" type="button" onClick={applyBatchFolder}>
-                      批量设文件夹
-                    </button>
+                    <div className="gv-batch-block">
+                      <span className="gv-batch-label">文件夹</span>
+                      <div className="gv-batch-block-row">
+                        <VoyagerSelect
+                          value={batchFolderId}
+                          options={[
+                            { value: "", label: "未分类" },
+                            ...classificationState.folders.map((folder) => ({ value: folder.id, label: folder.name }))
+                          ]}
+                          onChange={(nextValue) => setBatchFolderId(nextValue)}
+                          ariaLabel="批量选择文件夹"
+                          className="gv-select-shell-compact"
+                        />
+                        <button className="gv-mini-btn" type="button" onClick={applyBatchFolder}>
+                          应用
+                        </button>
+                      </div>
+                    </div>
 
-                    <select className="gv-select" value={batchTagId} onChange={(event) => setBatchTagId(event.target.value)}>
-                      <option value="">选择标签</option>
-                      {classificationState.tags.map((tag) => (
-                        <option key={`batch_tag_${tag.id}`} value={tag.id}>
-                          {tag.name}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="gv-actions-inline">
-                      <button className="gv-mini-btn" type="button" onClick={applyBatchAddTag}>
-                        批量加标签
-                      </button>
-                      <button className="gv-mini-btn" type="button" onClick={applyBatchRemoveTag}>
-                        批量去标签
-                      </button>
+                    <div className="gv-batch-block">
+                      <span className="gv-batch-label">标签</span>
+                      <div className="gv-batch-block-row">
+                        <VoyagerSelect
+                          value={batchTagId}
+                          options={[
+                            { value: "", label: "选择标签" },
+                            ...classificationState.tags.map((tag) => ({ value: tag.id, label: tag.name }))
+                          ]}
+                          onChange={(nextValue) => setBatchTagId(nextValue)}
+                          ariaLabel="批量选择标签"
+                          className="gv-select-shell-compact"
+                        />
+                        <div className="gv-actions-inline">
+                          <button className="gv-mini-btn" type="button" onClick={applyBatchAddTag}>
+                            添加
+                          </button>
+                          <button className="gv-mini-btn" type="button" onClick={applyBatchRemoveTag}>
+                            移除
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </>
+                </div>
               ) : (
-                <p className="gv-batch-hint">默认已收起，勾选会话后再展开批量操作。</p>
+                <p className="gv-batch-hint">默认收起，勾选会话后点击“批量操作 ▾”展开。</p>
               )}
             </div>
 
             <div
-              className={`gv-list ${settings.conversationCardDensity === "compact" ? "gv-list-compact" : ""}`}
+              className={`gv-list ${
+                settings.conversationCardDensity === "compact"
+                  ? "gv-list-compact"
+                  : settings.conversationCardDensity === "minimal"
+                    ? "gv-list-minimal"
+                    : ""
+              }`}
               ref={conversationListRef}
               onScroll={handleConversationListScroll}
             >
@@ -4774,11 +5176,33 @@ main form [class*="max-w"] {
                   const isActive = item.id === activeConversationId;
                   const meta = classificationState.metaByConversationId[item.id] ?? EMPTY_META;
                   const selectedForBatch = selectedConversationIdSet.has(item.id);
+                  const minimalMode = settings.conversationCardDensity === "minimal";
+                  const minimalExpanded = minimalMode && minimalExpandedConversationId === item.id;
 
                   return (
                     <div
                       key={item.id}
-                      className={`gv-item ${settings.conversationCardDensity === "compact" ? "gv-item-compact" : ""} ${isActive ? "gv-item-active" : ""}`}
+                      className={`gv-item ${
+                        settings.conversationCardDensity === "compact"
+                          ? "gv-item-compact"
+                          : settings.conversationCardDensity === "minimal"
+                            ? "gv-item-minimal"
+                            : ""
+                      } ${isActive ? "gv-item-active" : ""} ${minimalExpanded ? "gv-item-minimal-expanded" : ""}`}
+                      onClick={(event) => {
+                        if (!minimalMode) {
+                          return;
+                        }
+                        const target = event.target as HTMLElement;
+                        if (
+                          target.closest(
+                            "button,input,textarea,label,a,.gv-select-shell,.gv-select-menu,.gv-tag,.gv-star-btn,.gv-check-wrap"
+                          )
+                        ) {
+                          return;
+                        }
+                        setMinimalExpandedConversationId((previous) => (previous === item.id ? "" : item.id));
+                      }}
                     >
                       <div className="gv-item-top">
                         <label className="gv-check-wrap">
@@ -4808,18 +5232,16 @@ main form [class*="max-w"] {
                       </span>
 
                       <div className="gv-item-controls">
-                        <select
-                          className="gv-select"
+                        <VoyagerSelect
                           value={meta.folderId ?? ""}
-                          onChange={(event) => setConversationFolder(item.id, event.target.value)}
-                        >
-                          <option value="">未分类</option>
-                          {classificationState.folders.map((folder) => (
-                            <option key={folder.id} value={folder.id}>
-                              {folder.name}
-                            </option>
-                          ))}
-                        </select>
+                          options={[
+                            { value: "", label: "未分类" },
+                            ...classificationState.folders.map((folder) => ({ value: folder.id, label: folder.name }))
+                          ]}
+                          onChange={(nextValue) => setConversationFolder(item.id, nextValue)}
+                          ariaLabel={`会话文件夹 ${item.title}`}
+                          className="gv-select-shell-compact"
+                        />
                         <button className="gv-mini-btn gv-mini-btn-subtle" type="button" onClick={() => openConversationFolder(meta.folderId)}>
                           打开该文件夹
                         </button>
@@ -4845,14 +5267,32 @@ main form [class*="max-w"] {
                         )}
                       </div>
 
-                      <input
-                        className="gv-input gv-item-note"
-                        type="text"
-                        value={meta.note ?? ""}
-                        onChange={(event) => setConversationNote(item.id, event.target.value)}
-                        placeholder="添加备注（最多 240 字）"
-                        aria-label={`会话备注 ${item.title}`}
-                      />
+                      {minimalMode ? (
+                        minimalExpanded ? (
+                          <input
+                            className="gv-input gv-item-note"
+                            type="text"
+                            value={meta.note ?? ""}
+                            onChange={(event) => setConversationNote(item.id, event.target.value)}
+                            placeholder="添加备注（最多 240 字）"
+                            aria-label={`会话备注 ${item.title}`}
+                            onClick={(event) => event.stopPropagation()}
+                          />
+                        ) : (
+                          <div className="gv-item-note-collapsed" aria-hidden="true">
+                            {meta.note ? `备注：${meta.note}` : "点击卡片空白区域展开备注"}
+                          </div>
+                        )
+                      ) : (
+                        <input
+                          className="gv-input gv-item-note"
+                          type="text"
+                          value={meta.note ?? ""}
+                          onChange={(event) => setConversationNote(item.id, event.target.value)}
+                          placeholder="添加备注（最多 240 字）"
+                          aria-label={`会话备注 ${item.title}`}
+                        />
+                      )}
                     </div>
                   );
                 })}
@@ -4867,20 +5307,14 @@ main form [class*="max-w"] {
               )}
             </div>
           </section>
+          </div>
             </>
           ) : null}
 
           {activeView === "prompts" ? (
             <>
-          <section className="gv-section gv-section-highlight">
-            <p className="gv-metric">
-              当前共 <strong>{promptLibrary.length}</strong> 条模板，筛选后 <strong>{filteredPromptLibrary.length}</strong> 条，插入模式为
-              <strong>{settings.promptInsertMode === "append" ? " 追加" : " 覆盖"}</strong>，已选择
-              <strong>{` ${selectedPromptIds.length} `}</strong>条。
-            </p>
-          </section>
-          <section className="gv-section">
-            <div className="gv-section-title-row">
+          <section className="gv-section gv-section-prompts">
+            <div className="gv-section-title-row gv-section-title-row-prompts">
               <h2>提示词库</h2>
               <div className="gv-actions-inline">
                 <button className="gv-mini-btn" type="button" onClick={openPromptTemplateImportPicker}>
@@ -4898,95 +5332,101 @@ main form [class*="max-w"] {
                 />
               </div>
             </div>
-            <input
-              className="gv-input"
-              type="search"
-              value={promptQuery}
-              onChange={(event) => setPromptQuery(event.target.value)}
-              placeholder="搜索标题 / 正文 / 标签"
-              aria-label="搜索提示词"
-            />
-            <div className="gv-filter-row gv-filter-row-compact">
-              <select
-                className="gv-select"
-                value={promptTagFilter}
-                onChange={(event) => setPromptTagFilter(event.target.value)}
-              >
-                <option value="all">全部标签</option>
-                {promptTagOptions.map((tag) => (
-                  <option key={tag} value={tag}>
-                    {tag}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="gv-mini-btn"
-                type="button"
-                onClick={() => {
-                  setPromptQuery("");
-                  setPromptTagFilter("all");
-                }}
-              >
-                清空筛选
-              </button>
-            </div>
-            <div className="gv-btn-row">
-              <button className="gv-mini-btn gv-mini-btn-subtle" type="button" onClick={() => selectAllFilteredPrompts(filteredPromptIds)}>
-                全选筛选结果
-              </button>
-              <button className="gv-mini-btn gv-mini-btn-subtle" type="button" onClick={clearPromptSelection}>
-                清空选择
-              </button>
+
+            <div className="gv-prompt-overview">
+              当前共 <strong>{promptLibrary.length}</strong> 条模板，筛选后 <strong>{filteredPromptLibrary.length}</strong> 条，插入模式为
+              <strong>{settings.promptInsertMode === "append" ? " 追加" : " 覆盖"}</strong>，已选择
+              <strong>{` ${selectedPromptIds.length} `}</strong>条。
             </div>
 
-            <div className="gv-form-row">
+            <div className="gv-prompt-filter-panel">
               <input
                 className="gv-input"
-                type="text"
-                value={promptTitleDraft}
-                onChange={(event) => setPromptTitleDraft(event.target.value)}
-                placeholder="提示词标题"
-                aria-label="提示词标题"
+                type="search"
+                value={promptQuery}
+                onChange={(event) => setPromptQuery(event.target.value)}
+                placeholder="搜索标题 / 正文 / 标签"
+                aria-label="搜索提示词"
               />
-              <button className="gv-mini-btn" type="button" onClick={savePrompt}>
-                {editingPromptId ? "更新" : "保存"}
-              </button>
-            </div>
-            <input
-              className="gv-input"
-              type="text"
-              value={promptTagsDraft}
-              onChange={(event) => setPromptTagsDraft(event.target.value)}
-              placeholder="标签（用逗号分隔，例如：写作, 学习, 代码）"
-              aria-label="提示词标签"
-            />
-            <textarea
-              className="gv-textarea"
-              value={promptContentDraft}
-              onChange={(event) => setPromptContentDraft(event.target.value)}
-              placeholder="输入提示词正文..."
-              aria-label="提示词正文"
-            />
-            <div className="gv-btn-row">
-              {editingPromptId ? (
+              <div className="gv-prompt-filter-grid">
+                <VoyagerSelect
+                  value={promptTagFilter}
+                  options={[
+                    { value: "all", label: "全部标签" },
+                    ...promptTagOptions.map((tag) => ({ value: tag, label: tag }))
+                  ]}
+                  onChange={(nextValue) => setPromptTagFilter(nextValue)}
+                  ariaLabel="提示词标签筛选"
+                />
                 <button
                   className="gv-mini-btn"
                   type="button"
                   onClick={() => {
-                    setEditingPromptId("");
-                    setPromptTitleDraft("");
-                    setPromptContentDraft("");
-                    setPromptTagsDraft("");
+                    setPromptQuery("");
+                    setPromptTagFilter("all");
                   }}
                 >
-                  取消编辑
+                  清空筛选
                 </button>
-              ) : (
-                <span className="gv-inline-empty">
-                  插入模式：{settings.promptInsertMode === "append" ? "追加到输入框" : "覆盖输入框"}
-                </span>
-              )}
-              <span className="gv-status">{promptStatus}</span>
+                <button className="gv-mini-btn gv-mini-btn-subtle" type="button" onClick={() => selectAllFilteredPrompts(filteredPromptIds)}>
+                  全选筛选结果
+                </button>
+                <button className="gv-mini-btn gv-mini-btn-subtle" type="button" onClick={clearPromptSelection}>
+                  清空选择
+                </button>
+              </div>
+            </div>
+
+            <div className="gv-prompt-editor-panel">
+              <div className="gv-form-row gv-form-row-prompt-title">
+                <input
+                  className="gv-input"
+                  type="text"
+                  value={promptTitleDraft}
+                  onChange={(event) => setPromptTitleDraft(event.target.value)}
+                  placeholder="提示词标题"
+                  aria-label="提示词标题"
+                />
+                <button className="gv-mini-btn" type="button" onClick={savePrompt}>
+                  {editingPromptId ? "更新" : "保存"}
+                </button>
+              </div>
+              <input
+                className="gv-input"
+                type="text"
+                value={promptTagsDraft}
+                onChange={(event) => setPromptTagsDraft(event.target.value)}
+                placeholder="标签（用逗号分隔，例如：写作, 学习, 代码）"
+                aria-label="提示词标签"
+              />
+              <textarea
+                className="gv-textarea"
+                value={promptContentDraft}
+                onChange={(event) => setPromptContentDraft(event.target.value)}
+                placeholder="输入提示词正文..."
+                aria-label="提示词正文"
+              />
+              <div className="gv-btn-row gv-prompt-editor-foot">
+                {editingPromptId ? (
+                  <button
+                    className="gv-mini-btn"
+                    type="button"
+                    onClick={() => {
+                      setEditingPromptId("");
+                      setPromptTitleDraft("");
+                      setPromptContentDraft("");
+                      setPromptTagsDraft("");
+                    }}
+                  >
+                    取消编辑
+                  </button>
+                ) : (
+                  <span className="gv-inline-empty">
+                    插入模式：{settings.promptInsertMode === "append" ? "追加到输入框" : "覆盖输入框"}
+                  </span>
+                )}
+                <span className="gv-status">{promptStatus}</span>
+              </div>
             </div>
 
             <div className="gv-prompt-list">
@@ -5254,56 +5694,47 @@ main form [class*="max-w"] {
 
               <label className="gv-setting-item">
                 <span>扫描间隔（秒）</span>
-                <select
-                  className="gv-select"
+                <VoyagerSelect
                   value={String(settings.scanIntervalSec)}
-                  onChange={(event) =>
+                  options={SCAN_INTERVAL_OPTIONS}
+                  onChange={(nextValue) =>
                     setSettings((previous) => ({
                       ...previous,
-                      scanIntervalSec: Number(event.target.value)
+                      scanIntervalSec: Number(nextValue)
                     }))
                   }
-                >
-                  <option value="2">2</option>
-                  <option value="5">5</option>
-                  <option value="10">10</option>
-                  <option value="20">20</option>
-                  <option value="30">30</option>
-                </select>
+                  ariaLabel="自动扫描间隔"
+                />
               </label>
 
               <label className="gv-setting-item">
                 <span>提示词插入模式</span>
-                <select
-                  className="gv-select"
+                <VoyagerSelect
                   value={settings.promptInsertMode}
-                  onChange={(event) =>
+                  options={PROMPT_INSERT_MODE_OPTIONS}
+                  onChange={(nextValue) =>
                     setSettings((previous) => ({
                       ...previous,
-                      promptInsertMode: event.target.value as UserSettings["promptInsertMode"]
+                      promptInsertMode: nextValue
                     }))
                   }
-                >
-                  <option value="append">追加到输入框</option>
-                  <option value="replace">覆盖输入框</option>
-                </select>
+                  ariaLabel="提示词插入模式"
+                />
               </label>
 
               <label className="gv-setting-item">
                 <span>默认导出格式</span>
-                <select
-                  className="gv-select"
+                <VoyagerSelect
                   value={settings.defaultExportFormat}
-                  onChange={(event) =>
+                  options={DEFAULT_EXPORT_FORMAT_OPTIONS}
+                  onChange={(nextValue) =>
                     setSettings((previous) => ({
                       ...previous,
-                      defaultExportFormat: event.target.value as UserSettings["defaultExportFormat"]
+                      defaultExportFormat: nextValue
                     }))
                   }
-                >
-                  <option value="markdown">Markdown</option>
-                  <option value="html">HTML</option>
-                </select>
+                  ariaLabel="默认导出格式"
+                />
               </label>
 
               <label className="gv-setting-item">

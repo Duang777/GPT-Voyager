@@ -1,4 +1,6 @@
 import TurndownService from "turndown";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 
 export type ConversationMessage = {
   role: string;
@@ -11,7 +13,7 @@ type ConversationHtmlMessage = {
 };
 
 export type ConversationExportResult =
-  | { ok: true; fileName: string; messageCount: number }
+  | { ok: true; fileName: string; messageCount: number; mode?: "download" | "print_fallback"; warning?: string }
   | { ok: false; reason: string };
 
 const markdownConverter = new TurndownService({
@@ -120,7 +122,6 @@ function cleanupMessageClone(root: HTMLElement): void {
     "input",
     "select",
     "form",
-    "svg",
     "style",
     "script"
   ];
@@ -137,6 +138,22 @@ function cloneMessageContent(node: HTMLElement): HTMLElement {
   const clone = contentRoot.cloneNode(true) as HTMLElement;
   cleanupMessageClone(clone);
   return clone;
+}
+
+function isLikelyVisibleMessageNode(node: HTMLElement): boolean {
+  if (node.closest('[aria-hidden="true"]')) {
+    return false;
+  }
+  const style = window.getComputedStyle(node);
+  if (style.display === "none" || style.visibility === "hidden") {
+    return false;
+  }
+  return node.getClientRects().length > 0;
+}
+
+function toMessageSignature(role: string, content: string): string {
+  const normalized = normalizeText(content).replace(/\s+/g, " ").toLowerCase();
+  return `${role}::${normalized.slice(0, 400)}::${normalized.length}`;
 }
 
 function replaceMathWithTokens(root: HTMLElement): Map<string, string> {
@@ -260,12 +277,21 @@ export function collectConversationMessages(doc: Document = document): Conversat
   }
 
   const result: ConversationMessage[] = [];
+  let lastSignature = "";
   for (const node of roleNodes) {
+    if (!isLikelyVisibleMessageNode(node)) {
+      continue;
+    }
     const role = normalizeText(node.getAttribute("data-message-author-role")) || "unknown";
     const content = extractMessageMarkdown(node);
     if (!content) {
       continue;
     }
+    const signature = toMessageSignature(role, content);
+    if (signature === lastSignature) {
+      continue;
+    }
+    lastSignature = signature;
     result.push({ role, content });
   }
 
@@ -279,12 +305,21 @@ function collectConversationHtmlMessages(doc: Document = document): Conversation
   }
 
   const result: ConversationHtmlMessage[] = [];
+  let lastSignature = "";
   for (const node of roleNodes) {
+    if (!isLikelyVisibleMessageNode(node)) {
+      continue;
+    }
     const role = normalizeText(node.getAttribute("data-message-author-role")) || "unknown";
     const html = extractMessageHtml(node);
     if (!html) {
       continue;
     }
+    const signature = toMessageSignature(role, (node.textContent ?? "").trim());
+    if (signature === lastSignature) {
+      continue;
+    }
+    lastSignature = signature;
     result.push({ role, html });
   }
 
@@ -414,13 +449,13 @@ function buildConversationHtml(title: string, url: string, messages: Conversatio
 </html>`;
 }
 
-function buildConversationPdfDocument(title: string, url: string, messages: ConversationHtmlMessage[]): string {
+function buildConversationPdfPrintDocument(title: string, url: string, messages: ConversationHtmlMessage[]): string {
   const html = buildConversationHtml(title, url, messages);
   const printStyle = `
   <style>
     @page {
       size: A4;
-      margin: 14mm;
+      margin: 12mm;
     }
     @media print {
       body {
@@ -443,36 +478,361 @@ function buildConversationPdfDocument(title: string, url: string, messages: Conv
   </style>`;
   const printScript = `
   <script>
-    function waitForImages() {
-      var images = Array.prototype.slice.call(document.images || []);
-      if (images.length === 0) {
-        return Promise.resolve();
-      }
-      return Promise.all(images.map(function (img) {
-        if (img.complete) {
+    (function () {
+      function waitForImages() {
+        var images = Array.prototype.slice.call(document.images || []);
+        if (images.length === 0) {
           return Promise.resolve();
         }
-        return new Promise(function (resolve) {
-          img.addEventListener("load", resolve, { once: true });
-          img.addEventListener("error", resolve, { once: true });
+        return Promise.all(images.map(function (img) {
+          if (img.complete) {
+            return Promise.resolve();
+          }
+          return new Promise(function (resolve) {
+            img.addEventListener("load", resolve, { once: true });
+            img.addEventListener("error", resolve, { once: true });
+          });
+        }));
+      }
+      window.addEventListener("load", function () {
+        waitForImages().finally(function () {
+          setTimeout(function () {
+            try {
+              window.focus();
+              window.print();
+            } catch (err) {
+              // ignore
+            }
+          }, 180);
         });
-      }));
+      });
+    })();
+  </script>`;
+
+  return html.replace("</head>", `${printStyle}</head>`).replace("</body>", `${printScript}</body>`);
+}
+
+function buildPdfContainerHtml(title: string, url: string, messages: ConversationHtmlMessage[]): string {
+  const exportedAt = new Date().toLocaleString("zh-CN", { hour12: false });
+  const body = messages
+    .map((message) => {
+      return `
+<section class="gv-pdf-msg gv-pdf-msg-${escapeHtml(message.role)}">
+  <h2>${escapeHtml(roleLabel(message.role))}</h2>
+  <div class="gv-pdf-msg-content">${message.html}</div>
+</section>`;
+    })
+    .join("\n");
+
+  return `
+<main class="gv-pdf-container">
+  <h1>${escapeHtml(title)}</h1>
+  <ul class="gv-pdf-meta">
+    <li>导出时间：${escapeHtml(exportedAt)}</li>
+    <li>会话链接：<a href="${escapeHtml(url)}">${escapeHtml(url)}</a></li>
+    <li>消息数量：${messages.length}</li>
+  </ul>
+  ${body}
+</main>`;
+}
+
+const PDF_CAPTURE_STYLE = `
+.gv-pdf-capture-root {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 794px;
+  opacity: 1;
+  pointer-events: none;
+  z-index: -2147483647;
+  contain: layout style paint;
+}
+
+.gv-pdf-capture-root .gv-pdf-container {
+  width: 794px;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 26px 28px;
+  color: #111;
+  background: #fff;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  line-height: 1.65;
+}
+
+.gv-pdf-capture-root h1 {
+  margin: 0 0 10px;
+  font-size: 28px;
+  line-height: 1.35;
+}
+
+.gv-pdf-capture-root .gv-pdf-meta {
+  margin: 0 0 18px;
+  padding-left: 20px;
+  color: #3d4c6a;
+  font-size: 14px;
+}
+
+.gv-pdf-capture-root .gv-pdf-msg {
+  border-top: 1px solid #e8edf6;
+  padding-top: 16px;
+  margin-top: 16px;
+}
+
+.gv-pdf-capture-root .gv-pdf-msg h2 {
+  margin: 0 0 10px;
+  font-size: 17px;
+}
+
+.gv-pdf-capture-root .gv-pdf-msg-content > :first-child {
+  margin-top: 0;
+}
+
+.gv-pdf-capture-root .gv-pdf-msg-content > :last-child {
+  margin-bottom: 0;
+}
+
+.gv-pdf-capture-root .gv-pdf-msg-content pre {
+  background: #f4f6fa;
+  border: 1px solid #e0e6f2;
+  border-radius: 10px;
+  padding: 10px 12px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.gv-pdf-capture-root .gv-pdf-msg-content code {
+  font-family: "JetBrains Mono", "Consolas", "Courier New", monospace;
+  font-size: 0.92em;
+}
+
+.gv-pdf-capture-root .gv-pdf-msg-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+}
+
+.gv-pdf-capture-root .gv-pdf-msg-content th,
+.gv-pdf-capture-root .gv-pdf-msg-content td {
+  border: 1px solid #d9e1ef;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.gv-pdf-capture-root .gv-pdf-msg-content .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+}
+
+.gv-pdf-capture-root .gv-pdf-msg-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid #e5e8ef;
+  box-sizing: border-box;
+}
+
+.gv-pdf-capture-root a {
+  color: #0f172a;
+  text-decoration: none;
+}
+`;
+
+const KATEX_CSS_URL = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css";
+const KATEX_ASSET_BASE_URL = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/";
+let pdfKatexStylePromise: Promise<void> | null = null;
+
+function absolutizeKatexCssUrls(cssText: string): string {
+  return cssText.replace(/url\((['"]?)(?!data:|https?:|\/)([^'")]+)\1\)/g, (_matched, quote: string, path: string) => {
+    return `url(${quote}${KATEX_ASSET_BASE_URL}${path}${quote})`;
+  });
+}
+
+async function ensurePdfKatexStyles(): Promise<void> {
+  if (document.querySelector('style[data-gv-pdf-katex="1"]')) {
+    return;
+  }
+  if (!pdfKatexStylePromise) {
+    pdfKatexStylePromise = (async () => {
+      try {
+        const response = await fetch(KATEX_CSS_URL, { cache: "force-cache" });
+        if (!response.ok) {
+          return;
+        }
+        const cssText = await response.text();
+        const style = document.createElement("style");
+        style.setAttribute("data-gv-pdf-katex", "1");
+        style.textContent = absolutizeKatexCssUrls(cssText);
+        document.head.appendChild(style);
+      } catch {
+        // ignore stylesheet loading failure and fallback to existing page styles
+      }
+    })();
+  }
+  await pdfKatexStylePromise;
+}
+
+function waitForImagesInNode(root: HTMLElement, timeoutMs: number = 12000): Promise<void> {
+  const images = Array.from(root.querySelectorAll<HTMLImageElement>("img"));
+  if (images.length === 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let pending = 0;
+    const done = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve();
+    };
+    const finishOne = () => {
+      pending -= 1;
+      if (pending <= 0) {
+        done();
+      }
+    };
+
+    const timer = window.setTimeout(done, timeoutMs);
+    const clear = () => {
+      window.clearTimeout(timer);
+      done();
+    };
+
+    for (const image of images) {
+      if (image.complete) {
+        continue;
+      }
+      pending += 1;
+      const onDone = () => {
+        image.removeEventListener("load", onDone);
+        image.removeEventListener("error", onDone);
+        finishOne();
+      };
+      image.addEventListener("load", onDone, { once: true });
+      image.addEventListener("error", onDone, { once: true });
     }
 
-    window.addEventListener("load", function () {
-      waitForImages().finally(function () {
+    if (pending === 0) {
+      clear();
+    }
+  });
+}
+
+async function buildPdfFromMessages(
+  title: string,
+  url: string,
+  messages: ConversationHtmlMessage[]
+): Promise<{ fileName: string; messageCount: number }> {
+  await ensurePdfKatexStyles();
+
+  const root = document.createElement("div");
+  root.className = "gv-pdf-capture-root";
+  root.innerHTML = `<style>${PDF_CAPTURE_STYLE}</style>${buildPdfContainerHtml(title, url, messages)}`;
+  document.body.appendChild(root);
+
+  const container = root.querySelector<HTMLElement>(".gv-pdf-container");
+  if (!container) {
+    root.remove();
+    throw new Error("PDF 导出容器构建失败");
+  }
+
+  try {
+    if (container.scrollHeight > 22000) {
+      throw new Error("会话内容过长，已切换打印模式导出");
+    }
+
+    const fontsReady = document.fonts?.ready?.catch(() => undefined);
+    await Promise.all([waitForImagesInNode(container), fontsReady]);
+
+    const pdf = new jsPDF({
+      orientation: "portrait",
+      unit: "pt",
+      format: "a4",
+      compress: false
+    });
+
+    const htmlMethod = (pdf as jsPDF & { html?: unknown }).html;
+    if (typeof htmlMethod === "function") {
+      const renderScale = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3);
+      await new Promise<void>((resolve, reject) => {
         try {
-          setTimeout(function () {
-            window.focus();
-            window.print();
-          }, 180);
-        } catch (err) {
-          // ignore
+          (htmlMethod as (source: HTMLElement, options: Record<string, unknown>) => void)(container, {
+            callback: () => resolve(),
+            margin: [24, 24, 24, 24],
+            autoPaging: "text",
+            windowWidth: container.scrollWidth,
+            html2canvas: {
+              backgroundColor: "#ffffff",
+              useCORS: true,
+              allowTaint: false,
+              foreignObjectRendering: false,
+              scale: renderScale,
+              imageTimeout: 15000,
+              logging: false
+            }
+          });
+        } catch (error) {
+          reject(error instanceof Error ? error : new Error("PDF html 渲染失败"));
         }
       });
-    });
-  </script>`;
-  return html.replace("</head>", `${printStyle}</head>`).replace("</body>", `${printScript}</body>`);
+    } else {
+      const scale = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3);
+      const canvas = await html2canvas(container, {
+        backgroundColor: "#ffffff",
+        useCORS: true,
+        allowTaint: false,
+        foreignObjectRendering: false,
+        scale,
+        imageTimeout: 15000,
+        logging: false
+      });
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 24;
+      const printableWidth = pageWidth - margin * 2;
+      const printableHeight = pageHeight - margin * 2;
+      const pxPerPt = canvas.width / printableWidth;
+      const pageHeightPx = Math.max(1, Math.floor(printableHeight * pxPerPt));
+
+      let pageStartPx = 0;
+      let pageIndex = 0;
+      while (pageStartPx < canvas.height) {
+        const sliceHeightPx = Math.min(pageHeightPx, canvas.height - pageStartPx);
+        const pageCanvas = document.createElement("canvas");
+        pageCanvas.width = canvas.width;
+        pageCanvas.height = sliceHeightPx;
+        const ctx = pageCanvas.getContext("2d");
+        if (!ctx) {
+          throw new Error("PDF 分页画布构建失败");
+        }
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+        ctx.drawImage(canvas, 0, pageStartPx, canvas.width, sliceHeightPx, 0, 0, canvas.width, sliceHeightPx);
+
+        const imageData = pageCanvas.toDataURL("image/png");
+        const sliceHeightPt = sliceHeightPx / pxPerPt;
+        if (pageIndex > 0) {
+          pdf.addPage();
+        }
+        pdf.addImage(imageData, "PNG", margin, margin, printableWidth, sliceHeightPt);
+
+        pageStartPx += sliceHeightPx;
+        pageIndex += 1;
+      }
+    }
+
+    const fileName = `${sanitizeFileName(title)}.pdf`;
+    pdf.save(fileName);
+    return {
+      fileName,
+      messageCount: messages.length
+    };
+  } finally {
+    root.remove();
+  }
 }
 
 function openHtmlInNewTab(html: string): boolean {
@@ -483,9 +843,7 @@ function openHtmlInNewTab(html: string): boolean {
     URL.revokeObjectURL(objectUrl);
     return false;
   }
-  window.setTimeout(() => {
-    URL.revokeObjectURL(objectUrl);
-  }, 120000);
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 120000);
   return true;
 }
 
@@ -549,7 +907,7 @@ export function exportCurrentConversationToHtml(): ConversationExportResult {
   };
 }
 
-export function exportCurrentConversationToPdf(): ConversationExportResult {
+export async function exportCurrentConversationToPdf(): Promise<ConversationExportResult> {
   const matched = window.location.pathname.match(/^\/c\/([a-zA-Z0-9-]+)/);
   if (!matched) {
     return { ok: false, reason: "当前页面不是会话详情页" };
@@ -562,15 +920,28 @@ export function exportCurrentConversationToPdf(): ConversationExportResult {
 
   const title = getCurrentConversationTitle();
   const url = getCurrentConversationUrl();
-  const html = buildConversationPdfDocument(title, url, messages);
-  const opened = openHtmlInNewTab(html);
-  if (!opened) {
-    return { ok: false, reason: "浏览器拦截了弹窗，请允许后重试" };
+  const fileName = `${sanitizeFileName(title)}.pdf`;
+  try {
+    const result = await buildPdfFromMessages(title, url, messages);
+    return {
+      ok: true,
+      fileName: result.fileName,
+      messageCount: result.messageCount,
+      mode: "download"
+    };
+  } catch (error) {
+    const rawReason = error instanceof Error ? error.message : "未知错误";
+    const printable = buildConversationPdfPrintDocument(title, url, messages);
+    const opened = openHtmlInNewTab(printable);
+    if (opened) {
+      return {
+        ok: true,
+        fileName,
+        messageCount: messages.length,
+        mode: "print_fallback",
+        warning: `直接下载失败，已打开打印页（${rawReason}）`
+      };
+    }
+    return { ok: false, reason: `PDF 导出失败：${rawReason}` };
   }
-
-  return {
-    ok: true,
-    fileName: `${sanitizeFileName(title)}.pdf`,
-    messageCount: messages.length
-  };
 }

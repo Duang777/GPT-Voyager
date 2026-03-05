@@ -60,3 +60,24 @@
 | 2026-03-05 | FEAT-048 | 去绿色化高亮重构（中性灰黑强调） | ui/fix | N/A | `docs/features/2026-03-05-p1-remove-green-highlights-neutral-accent.md` | 将导航/卡片/焦点/定位等绿色强调统一替换为中性灰黑体系 |
 | 2026-03-05 | FEAT-049 | PDF 导出 + 账户隔离模式 + 引用回复 | feat | N/A | `docs/features/2026-03-05-p1-pdf-export-account-isolation-and-quote-reply.md` | 新增会话 PDF（含图片）导出、按账号作用域隔离数据、选中文本一键引用回复 |
 | 2026-03-05 | FIX-005 | 修复 PDF 导出空白窗口 | fix | N/A | `docs/features/2026-03-05-fix-pdf-export-blank-window.md` | 改为 Blob URL 打开导出页并等待图片加载后触发打印，避免空白页 |
+| 2026-03-05 | FIX-006 / UX-006 | PDF 直接下载 + 导出中心前置 | fix/ui | N/A | `docs/features/2026-03-05-fix-direct-pdf-download-and-export-center-priority.md` | 导出 PDF 改为直接生成下载，导出入口上移到会话工作台前部 |
+| 2026-03-05 | FIX-007 | 修复 PDF 公式渲染异常与清晰度问题 | fix | N/A | `docs/features/2026-03-05-fix-pdf-math-render-quality.md` | 提升渲染倍率、修正离屏坐标、保留 svg 并降低压缩导致的公式发虚/错位 |
+| 2026-03-05 | FIX-008 | 修复 PDF 公式布局与重复段落问题 | fix | N/A | `docs/features/2026-03-05-fix-pdf-formula-layout-and-duplicate-blocks.md` | PDF 改用 html 自动分页优先、回退切片分页，并加入可见节点过滤与相邻重复去重 |
+| 2026-03-05 | FIX-009 / PERF-001 | PDF 强兜底导出 + 会话观察器性能优化 | fix/perf | N/A | `docs/features/2026-03-05-fix-pdf-fallback-and-observer-performance.md` | 直接下载失败自动回退打印页，且仅在会话工作台活跃时运行高频观察器并加入 rAF 刷新节流 |
+| 2026-03-05 | FEAT-050 | 会话工作台卡片化入口与单模块视图 | feat/ui | N/A | `docs/features/2026-03-05-feat-conversation-workspace-card-navigation.md` | 会话页改为卡片入口导航，点击后仅显示对应工作台模块，降低信息堆叠复杂度 |
+| 2026-03-05 | FIX-010 | 筛选展开控件视觉对齐修复 | ui/fix | N/A | `docs/features/2026-03-05-fix-filter-expand-visual-alignment.md` | 修复窄面板下拉被挤压导致的竖排/变形问题，统一筛选行布局与下拉展开样式 |
+| 2026-03-05 | FEAT-051 / FIX-011 | 分类卡片化进入 + 顶部间距修复 | feat/ui | N/A | `docs/features/2026-03-05-feat-classification-cards-and-topbar-spacing-fix.md` | 分类管理改为分类卡片并支持直接进入，且会话页顶部区块去重并优化 sticky 间距 |
+| 2026-03-05 | FIX-012 / UI-012 | 原生下拉替换自定义展开 + 分类列表扁平化 | ui/fix | N/A | `docs/features/2026-03-05-fix-dropdown-native-select-and-flat-category-list.md` | 移除 InlineSelect 浮层并统一为原生 select，下拉展开更克制；分类改为单列扁平卡片列表 |
+| 2026-03-05 | UI-013 / FIX-013 | 会话索引轻量展开重构 + 分类单列列表行细化 | ui/fix | N/A | `docs/features/2026-03-05-ui-flat-index-panels-and-list-row-classification.md` | 高级筛选与批量操作改为轻量卡片式展开，分类列表进一步扁平为单列行并优化工作台区块间距 |
+| 2026-03-05 | UI-014 / FIX-014 | 全局下拉框极简重构（全页面统一） | ui/fix | N/A | `docs/features/2026-03-05-ui-select-minimal-restyle-all-pages.md` | 统一所有 select 为细边框轻焦点风格，降低突兀框感，并对会话卡片/批量区下拉做紧凑化适配 |
+| 2026-03-05 | UI-015 / FIX-015 | 全页面统一自定义下拉（替换原生 Select 弹层） | ui/fix | N/A | `docs/features/2026-03-05-ui-custom-select-consistent-style-all-pages.md` | 新增 VoyagerSelect 并替换所有原生 select，去除系统蓝色菜单样式差异，实现全页面风格一致 |
+| 2026-03-05 | FIX-016 | 修复自定义下拉在 Shadow DOM 下无法展开点击 | fix | N/A | `docs/features/2026-03-05-fix-custom-select-shadow-dom-portal-click.md` | 取消 portal 到 document.body，改为组件内渲染菜单层，恢复下拉可点击与样式作用域一致性 |
+| 2026-03-05 | UI-016 | 提示词工作台排版重组（概览 / 筛选 / 编辑分区） | ui | N/A | `docs/features/2026-03-05-ui-prompt-workspace-layout-reorganization.md` | 提示词页改为分区布局并统一网格对齐，降低控件堆叠和视觉混乱感 |
+| 2026-03-05 | UI-017 | 全局控件系统与对齐规则优化 | ui | N/A | `docs/features/2026-03-05-ui-global-alignment-and-control-system-polish.md` | 统一按钮/输入/下拉尺寸与圆角，优化标题区按钮网格和会话控制区对齐，弱化过度悬浮动效 |
+| 2026-03-05 | FIX-018 | 修复下拉框再次点击无法收起 | fix | N/A | `docs/features/2026-03-05-fix-select-toggle-close-interaction.md` | 调整自定义下拉事件边界与点击抑制逻辑，确保同一触发器可稳定开关、外部点击可关闭 |
+| 2026-03-05 | FIX-019 / UI-018 | 下拉可用性修复（Tab 收起 + 防裁切）与按钮密度优化 | fix/ui | N/A | `docs/features/2026-03-05-fix-select-focus-close-overflow-and-button-density.md` | 修复键盘离焦收起与滚动容器裁切问题，并优化高频操作区按钮最小宽度策略以提升对齐稳定性 |
+| 2026-03-05 | FIX-020 | 修复下拉选项可见但无法点击选择 | fix | N/A | `docs/features/2026-03-05-fix-select-option-click-not-selectable.md` | 移除触发过早关闭的 onBlurCapture，恢复选项点击选择流程 |
+| 2026-03-05 | FIX-021 | 修复 Shadow DOM 事件重定向导致下拉无法选择 | fix | N/A | `docs/features/2026-03-05-fix-select-shadow-dom-retarget-click-selection.md` | 外部点击判定改为 composedPath + contains 回退，避免组件内点击被误判为外部点击 |
+| 2026-03-05 | FIX-022 / UI-019 | 修复批量操作区控件挤压与对齐混乱 | fix/ui | N/A | `docs/features/2026-03-05-fix-batch-panel-crowded-layout-and-alignment.md` | 批量区改为单列纵向结构，块内控件先下拉后按钮，按钮全宽/等宽网格，缓解窄侧栏拥挤问题 |
+| 2026-03-05 | FIX-023 / UI-020 | 修复紧凑会话卡片排版溢出与密度失衡 | fix/ui | N/A | `docs/features/2026-03-05-fix-compact-card-layout-overflow-and-density.md` | 紧凑模式改为更稳的单列操作区并调整元信息排版与虚拟行高估算，缓解时间截断和控件挤压 |
+| 2026-03-05 | FEAT-052 / UI-021 | 新增“极简紧凑”密度与备注按需展开 | feat/ui | N/A | `docs/features/2026-03-05-feat-minimal-compact-density-with-click-expand-note.md` | 新增 minimal 密度档，默认隐藏备注输入，点击卡片空白区域后展开备注编辑并与虚拟滚动行高联动 |

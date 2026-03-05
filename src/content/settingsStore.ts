@@ -1,6 +1,6 @@
 export type ExportFormat = "markdown" | "html";
 export type PromptInsertMode = "append" | "replace";
-export type ConversationCardDensity = "compact" | "standard";
+export type ConversationCardDensity = "compact" | "minimal" | "standard";
 export type ConversationSortMode = "recent_desc" | "title_asc";
 
 export type UserSettings = {
@@ -55,7 +55,13 @@ function parseExportFormat(value: unknown): ExportFormat {
 }
 
 function parseConversationCardDensity(value: unknown): ConversationCardDensity {
-  return value === "compact" ? "compact" : "standard";
+  if (value === "compact") {
+    return "compact";
+  }
+  if (value === "minimal") {
+    return "minimal";
+  }
+  return "standard";
 }
 
 function parseConversationSortMode(value: unknown): ConversationSortMode {
