@@ -1,4 +1,5 @@
 import type { FormulaDisplayMode, FormulaSource } from "./conversationFormula";
+import { buildScopedStorageKey, normalizeStorageScope } from "./storageScope";
 
 export type FormulaFavorite = {
   id: string;
@@ -102,19 +103,44 @@ export async function loadFormulaFavorites(): Promise<FormulaFavorite[]> {
   if (!chrome?.storage?.local) {
     return [];
   }
+  const storageKey = buildScopedStorageKey(FORMULA_FAVORITES_STORAGE_KEY);
   return new Promise((resolve) => {
-    chrome.storage.local.get(FORMULA_FAVORITES_STORAGE_KEY, (result) => {
+    chrome.storage.local.get(storageKey, (result) => {
+      resolve(sanitizeFormulaFavorites(result?.[storageKey]));
+    });
+  });
+}
+
+export async function loadFormulaFavoritesByScope(scope?: string): Promise<FormulaFavorite[]> {
+  if (!chrome?.storage?.local) {
+    return [];
+  }
+
+  const normalizedScope = normalizeStorageScope(scope);
+  const scopedStorageKey = buildScopedStorageKey(FORMULA_FAVORITES_STORAGE_KEY, normalizedScope);
+  if (scopedStorageKey === FORMULA_FAVORITES_STORAGE_KEY) {
+    return loadFormulaFavorites();
+  }
+
+  return new Promise((resolve) => {
+    chrome.storage.local.get([scopedStorageKey, FORMULA_FAVORITES_STORAGE_KEY], (result) => {
+      const scopedValue = result?.[scopedStorageKey];
+      if (scopedValue !== undefined) {
+        resolve(sanitizeFormulaFavorites(scopedValue));
+        return;
+      }
       resolve(sanitizeFormulaFavorites(result?.[FORMULA_FAVORITES_STORAGE_KEY]));
     });
   });
 }
 
-export async function saveFormulaFavorites(items: FormulaFavorite[]): Promise<void> {
+export async function saveFormulaFavorites(items: FormulaFavorite[], scope?: string): Promise<void> {
   if (!chrome?.storage?.local) {
     return;
   }
+  const storageKey = buildScopedStorageKey(FORMULA_FAVORITES_STORAGE_KEY, scope);
   await new Promise<void>((resolve) => {
-    chrome.storage.local.set({ [FORMULA_FAVORITES_STORAGE_KEY]: sanitizeFormulaFavorites(items) }, () => resolve());
+    chrome.storage.local.set({ [storageKey]: sanitizeFormulaFavorites(items) }, () => resolve());
   });
 }
 

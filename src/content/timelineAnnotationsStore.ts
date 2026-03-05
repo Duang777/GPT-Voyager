@@ -1,3 +1,5 @@
+import { buildScopedStorageKey, normalizeStorageScope } from "./storageScope";
+
 export type TimelineNodeAnnotation = {
   id: string;
   conversationId: string;
@@ -111,20 +113,44 @@ export async function loadTimelineAnnotations(): Promise<TimelineNodeAnnotation[
     return [];
   }
 
+  const storageKey = buildScopedStorageKey(TIMELINE_ANNOTATIONS_STORAGE_KEY);
   return new Promise((resolve) => {
-    chrome.storage.local.get(TIMELINE_ANNOTATIONS_STORAGE_KEY, (result) => {
+    chrome.storage.local.get(storageKey, (result) => {
+      resolve(sanitizeTimelineAnnotations(result?.[storageKey]));
+    });
+  });
+}
+
+export async function loadTimelineAnnotationsByScope(scope?: string): Promise<TimelineNodeAnnotation[]> {
+  if (!chrome?.storage?.local) {
+    return [];
+  }
+
+  const normalizedScope = normalizeStorageScope(scope);
+  const scopedStorageKey = buildScopedStorageKey(TIMELINE_ANNOTATIONS_STORAGE_KEY, normalizedScope);
+  if (scopedStorageKey === TIMELINE_ANNOTATIONS_STORAGE_KEY) {
+    return loadTimelineAnnotations();
+  }
+
+  return new Promise((resolve) => {
+    chrome.storage.local.get([scopedStorageKey, TIMELINE_ANNOTATIONS_STORAGE_KEY], (result) => {
+      const scopedValue = result?.[scopedStorageKey];
+      if (scopedValue !== undefined) {
+        resolve(sanitizeTimelineAnnotations(scopedValue));
+        return;
+      }
       resolve(sanitizeTimelineAnnotations(result?.[TIMELINE_ANNOTATIONS_STORAGE_KEY]));
     });
   });
 }
 
-export async function saveTimelineAnnotations(items: TimelineNodeAnnotation[]): Promise<void> {
+export async function saveTimelineAnnotations(items: TimelineNodeAnnotation[], scope?: string): Promise<void> {
   if (!chrome?.storage?.local) {
     return;
   }
 
+  const storageKey = buildScopedStorageKey(TIMELINE_ANNOTATIONS_STORAGE_KEY, scope);
   await new Promise<void>((resolve) => {
-    chrome.storage.local.set({ [TIMELINE_ANNOTATIONS_STORAGE_KEY]: sanitizeTimelineAnnotations(items) }, () => resolve());
+    chrome.storage.local.set({ [storageKey]: sanitizeTimelineAnnotations(items) }, () => resolve());
   });
 }
-

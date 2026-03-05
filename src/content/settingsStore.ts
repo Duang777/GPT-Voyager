@@ -14,6 +14,9 @@ export type UserSettings = {
   chatContentWidthPercent: number;
   conversationCardDensity: ConversationCardDensity;
   conversationSortMode: ConversationSortMode;
+  accountIsolationEnabled: boolean;
+  accountIsolationManualScope: string;
+  quoteReplyEnabled: boolean;
 };
 
 export const SETTINGS_STORAGE_KEY = "gpt_voyager_settings_v1";
@@ -29,7 +32,10 @@ export function createDefaultSettings(): UserSettings {
     formulaClickCopyEnabled: true,
     chatContentWidthPercent: 78,
     conversationCardDensity: "standard",
-    conversationSortMode: "recent_desc"
+    conversationSortMode: "recent_desc",
+    accountIsolationEnabled: false,
+    accountIsolationManualScope: "",
+    quoteReplyEnabled: true
   };
 }
 
@@ -63,6 +69,18 @@ function clampChatContentWidthPercent(value: number): number {
   return Math.min(96, Math.max(64, Math.round(value)));
 }
 
+function normalizeManualScope(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9_.@-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64);
+}
+
 export function sanitizeUserSettings(raw: unknown): UserSettings {
   const defaults = createDefaultSettings();
   if (!raw || typeof raw !== "object") {
@@ -87,7 +105,17 @@ export function sanitizeUserSettings(raw: unknown): UserSettings {
         ? clampChatContentWidthPercent(source.chatContentWidthPercent)
         : defaults.chatContentWidthPercent,
     conversationCardDensity: parseConversationCardDensity(source.conversationCardDensity),
-    conversationSortMode: parseConversationSortMode(source.conversationSortMode)
+    conversationSortMode: parseConversationSortMode(source.conversationSortMode),
+    accountIsolationEnabled:
+      source.accountIsolationEnabled !== undefined
+        ? Boolean(source.accountIsolationEnabled)
+        : defaults.accountIsolationEnabled,
+    accountIsolationManualScope:
+      source.accountIsolationManualScope !== undefined
+        ? normalizeManualScope(source.accountIsolationManualScope)
+        : defaults.accountIsolationManualScope,
+    quoteReplyEnabled:
+      source.quoteReplyEnabled !== undefined ? Boolean(source.quoteReplyEnabled) : defaults.quoteReplyEnabled
   };
 }
 

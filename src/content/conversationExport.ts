@@ -391,6 +391,13 @@ function buildConversationHtml(title: string, url: string, messages: Conversatio
       overflow-y: hidden;
       padding: 2px 0;
     }
+    .msg-content img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 8px;
+      border: 1px solid #e5e8ef;
+      box-sizing: border-box;
+    }
   </style>
 </head>
 <body>
@@ -405,6 +412,49 @@ function buildConversationHtml(title: string, url: string, messages: Conversatio
   </main>
 </body>
 </html>`;
+}
+
+function buildConversationPdfDocument(title: string, url: string, messages: ConversationHtmlMessage[]): string {
+  const html = buildConversationHtml(title, url, messages);
+  const printStyle = `
+  <style>
+    @page {
+      size: A4;
+      margin: 14mm;
+    }
+    @media print {
+      body {
+        background: #ffffff !important;
+        padding: 0 !important;
+      }
+      .container {
+        box-shadow: none !important;
+        border: none !important;
+        border-radius: 0 !important;
+        max-width: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+      a {
+        color: #111 !important;
+        text-decoration: none !important;
+      }
+    }
+  </style>`;
+  const printScript = `
+  <script>
+    window.addEventListener("load", function () {
+      setTimeout(function () {
+        try {
+          window.focus();
+          window.print();
+        } catch (err) {
+          // ignore
+        }
+      }, 220);
+    });
+  </script>`;
+  return html.replace("</head>", `${printStyle}</head>`).replace("</body>", `${printScript}</body>`);
 }
 
 function downloadTextFile(fileName: string, content: string, mimeType: string): void {
@@ -463,6 +513,37 @@ export function exportCurrentConversationToHtml(): ConversationExportResult {
   return {
     ok: true,
     fileName,
+    messageCount: messages.length
+  };
+}
+
+export function exportCurrentConversationToPdf(): ConversationExportResult {
+  const matched = window.location.pathname.match(/^\/c\/([a-zA-Z0-9-]+)/);
+  if (!matched) {
+    return { ok: false, reason: "当前页面不是会话详情页" };
+  }
+
+  const messages = collectConversationHtmlMessages(document);
+  if (messages.length === 0) {
+    return { ok: false, reason: "未检测到可导出的会话内容" };
+  }
+
+  const title = getCurrentConversationTitle();
+  const url = getCurrentConversationUrl();
+  const html = buildConversationPdfDocument(title, url, messages);
+
+  const printWindow = window.open("", "_blank", "noopener,noreferrer");
+  if (!printWindow) {
+    return { ok: false, reason: "浏览器拦截了弹窗，请允许后重试" };
+  }
+
+  printWindow.document.open();
+  printWindow.document.write(html);
+  printWindow.document.close();
+
+  return {
+    ok: true,
+    fileName: `${sanitizeFileName(title)}.pdf`,
     messageCount: messages.length
   };
 }

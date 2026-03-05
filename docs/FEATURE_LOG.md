@@ -58,3 +58,4 @@
 | 2026-03-04 | FEAT-046 | 仓库重命名与 README 链接同步 | chore/docs | N/A | `docs/features/2026-03-04-p1-repo-rename-and-readme-link-sync.md` | 仓库改名为 GPT-Voyager，并同步 About/远端/README 外链到新路径 |
 | 2026-03-05 | FEAT-047 | 侧边栏 UI 重构（极简白色专业风） | feat/ui | N/A | `docs/features/2026-03-05-p1-sidebar-ui-minimal-white-refactor.md` | 重构顶部信息层级与全局控件体系，统一白色专业风并补强 focus/reduced-motion |
 | 2026-03-05 | FEAT-048 | 去绿色化高亮重构（中性灰黑强调） | ui/fix | N/A | `docs/features/2026-03-05-p1-remove-green-highlights-neutral-accent.md` | 将导航/卡片/焦点/定位等绿色强调统一替换为中性灰黑体系 |
+| 2026-03-05 | FEAT-049 | PDF 导出 + 账户隔离模式 + 引用回复 | feat | N/A | `docs/features/2026-03-05-p1-pdf-export-account-isolation-and-quote-reply.md` | 新增会话 PDF（含图片）导出、按账号作用域隔离数据、选中文本一键引用回复 |

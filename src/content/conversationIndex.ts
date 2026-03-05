@@ -1,3 +1,5 @@
+import { buildScopedStorageKey, normalizeStorageScope } from "./storageScope";
+
 export type ConversationEntry = {
   id: string;
   url: string;
@@ -141,9 +143,10 @@ export async function loadConversationIndex(): Promise<ConversationEntry[]> {
     return [];
   }
 
+  const storageKey = buildScopedStorageKey(CONVERSATION_INDEX_STORAGE_KEY);
   return new Promise((resolve) => {
-    chrome.storage.local.get(CONVERSATION_INDEX_STORAGE_KEY, (result) => {
-      resolve(sanitizeConversationIndex(result?.[CONVERSATION_INDEX_STORAGE_KEY]));
+    chrome.storage.local.get(storageKey, (result) => {
+      resolve(sanitizeConversationIndex(result?.[storageKey]));
     });
   });
 }
@@ -164,13 +167,37 @@ export function sanitizeConversationIndex(raw: unknown): ConversationEntry[] {
     .sort((a, b) => b.lastSeenAt - a.lastSeenAt);
 }
 
-export async function saveConversationIndex(entries: ConversationEntry[]): Promise<void> {
+export async function loadConversationIndexByScope(scope?: string): Promise<ConversationEntry[]> {
+  if (!chrome?.storage?.local) {
+    return [];
+  }
+
+  const normalizedScope = normalizeStorageScope(scope);
+  const scopedStorageKey = buildScopedStorageKey(CONVERSATION_INDEX_STORAGE_KEY, normalizedScope);
+  if (scopedStorageKey === CONVERSATION_INDEX_STORAGE_KEY) {
+    return loadConversationIndex();
+  }
+
+  return new Promise((resolve) => {
+    chrome.storage.local.get([scopedStorageKey, CONVERSATION_INDEX_STORAGE_KEY], (result) => {
+      const scopedValue = result?.[scopedStorageKey];
+      if (scopedValue !== undefined) {
+        resolve(sanitizeConversationIndex(scopedValue));
+        return;
+      }
+      resolve(sanitizeConversationIndex(result?.[CONVERSATION_INDEX_STORAGE_KEY]));
+    });
+  });
+}
+
+export async function saveConversationIndex(entries: ConversationEntry[], scope?: string): Promise<void> {
   if (!chrome?.storage?.local) {
     return;
   }
 
+  const storageKey = buildScopedStorageKey(CONVERSATION_INDEX_STORAGE_KEY, scope);
   await new Promise<void>((resolve) => {
-    chrome.storage.local.set({ [CONVERSATION_INDEX_STORAGE_KEY]: entries }, () => resolve());
+    chrome.storage.local.set({ [storageKey]: entries }, () => resolve());
   });
 }
 

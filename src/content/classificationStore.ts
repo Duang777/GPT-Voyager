@@ -1,3 +1,5 @@
+import { buildScopedStorageKey, normalizeStorageScope } from "./storageScope";
+
 export type Folder = {
   id: string;
   name: string;
@@ -115,21 +117,46 @@ export async function loadClassificationState(): Promise<ClassificationState> {
     return createEmptyClassificationState();
   }
 
+  const storageKey = buildScopedStorageKey(CLASSIFICATION_STORAGE_KEY);
   return new Promise((resolve) => {
-    chrome.storage.local.get(CLASSIFICATION_STORAGE_KEY, (result) => {
-      const raw = result?.[CLASSIFICATION_STORAGE_KEY];
+    chrome.storage.local.get(storageKey, (result) => {
+      const raw = result?.[storageKey];
       resolve(sanitizeClassificationState(raw));
     });
   });
 }
 
-export async function saveClassificationState(state: ClassificationState): Promise<void> {
+export async function loadClassificationStateByScope(scope?: string): Promise<ClassificationState> {
+  if (!chrome?.storage?.local) {
+    return createEmptyClassificationState();
+  }
+
+  const normalizedScope = normalizeStorageScope(scope);
+  const scopedStorageKey = buildScopedStorageKey(CLASSIFICATION_STORAGE_KEY, normalizedScope);
+  if (scopedStorageKey === CLASSIFICATION_STORAGE_KEY) {
+    return loadClassificationState();
+  }
+
+  return new Promise((resolve) => {
+    chrome.storage.local.get([scopedStorageKey, CLASSIFICATION_STORAGE_KEY], (result) => {
+      const scopedValue = result?.[scopedStorageKey];
+      if (scopedValue !== undefined) {
+        resolve(sanitizeClassificationState(scopedValue));
+        return;
+      }
+      resolve(sanitizeClassificationState(result?.[CLASSIFICATION_STORAGE_KEY]));
+    });
+  });
+}
+
+export async function saveClassificationState(state: ClassificationState, scope?: string): Promise<void> {
   if (!chrome?.storage?.local) {
     return;
   }
 
+  const storageKey = buildScopedStorageKey(CLASSIFICATION_STORAGE_KEY, scope);
   await new Promise<void>((resolve) => {
-    chrome.storage.local.set({ [CLASSIFICATION_STORAGE_KEY]: state }, () => resolve());
+    chrome.storage.local.set({ [storageKey]: state }, () => resolve());
   });
 }
 

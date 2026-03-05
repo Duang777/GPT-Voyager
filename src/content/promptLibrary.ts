@@ -1,3 +1,5 @@
+import { buildScopedStorageKey, normalizeStorageScope } from "./storageScope";
+
 export type PromptVariablePreset = {
   id: string;
   name: string;
@@ -179,9 +181,10 @@ export async function loadPromptLibrary(): Promise<PromptSnippet[]> {
     return [];
   }
 
+  const storageKey = buildScopedStorageKey(PROMPT_LIBRARY_STORAGE_KEY);
   return new Promise((resolve) => {
-    chrome.storage.local.get(PROMPT_LIBRARY_STORAGE_KEY, (result) => {
-      resolve(sanitizePromptLibrary(result?.[PROMPT_LIBRARY_STORAGE_KEY]));
+    chrome.storage.local.get(storageKey, (result) => {
+      resolve(sanitizePromptLibrary(result?.[storageKey]));
     });
   });
 }
@@ -208,12 +211,36 @@ export function sanitizePromptLibrary(raw: unknown): PromptSnippet[] {
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-export async function savePromptLibrary(snippets: PromptSnippet[]): Promise<void> {
+export async function loadPromptLibraryByScope(scope?: string): Promise<PromptSnippet[]> {
+  if (!chrome?.storage?.local) {
+    return [];
+  }
+
+  const normalizedScope = normalizeStorageScope(scope);
+  const scopedStorageKey = buildScopedStorageKey(PROMPT_LIBRARY_STORAGE_KEY, normalizedScope);
+  if (scopedStorageKey === PROMPT_LIBRARY_STORAGE_KEY) {
+    return loadPromptLibrary();
+  }
+
+  return new Promise((resolve) => {
+    chrome.storage.local.get([scopedStorageKey, PROMPT_LIBRARY_STORAGE_KEY], (result) => {
+      const scopedValue = result?.[scopedStorageKey];
+      if (scopedValue !== undefined) {
+        resolve(sanitizePromptLibrary(scopedValue));
+        return;
+      }
+      resolve(sanitizePromptLibrary(result?.[PROMPT_LIBRARY_STORAGE_KEY]));
+    });
+  });
+}
+
+export async function savePromptLibrary(snippets: PromptSnippet[], scope?: string): Promise<void> {
   if (!chrome?.storage?.local) {
     return;
   }
 
+  const storageKey = buildScopedStorageKey(PROMPT_LIBRARY_STORAGE_KEY, scope);
   await new Promise<void>((resolve) => {
-    chrome.storage.local.set({ [PROMPT_LIBRARY_STORAGE_KEY]: snippets }, () => resolve());
+    chrome.storage.local.set({ [storageKey]: snippets }, () => resolve());
   });
 }

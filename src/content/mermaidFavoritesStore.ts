@@ -1,3 +1,5 @@
+import { buildScopedStorageKey, normalizeStorageScope } from "./storageScope";
+
 export type MermaidFavorite = {
   id: string;
   alias: string;
@@ -113,20 +115,45 @@ export async function loadMermaidFavorites(): Promise<MermaidFavorite[]> {
     return [];
   }
 
+  const storageKey = buildScopedStorageKey(MERMAID_FAVORITES_STORAGE_KEY);
   return new Promise((resolve) => {
-    chrome.storage.local.get(MERMAID_FAVORITES_STORAGE_KEY, (result) => {
+    chrome.storage.local.get(storageKey, (result) => {
+      resolve(sanitizeMermaidFavorites(result?.[storageKey]));
+    });
+  });
+}
+
+export async function loadMermaidFavoritesByScope(scope?: string): Promise<MermaidFavorite[]> {
+  if (!chrome?.storage?.local) {
+    return [];
+  }
+
+  const normalizedScope = normalizeStorageScope(scope);
+  const scopedStorageKey = buildScopedStorageKey(MERMAID_FAVORITES_STORAGE_KEY, normalizedScope);
+  if (scopedStorageKey === MERMAID_FAVORITES_STORAGE_KEY) {
+    return loadMermaidFavorites();
+  }
+
+  return new Promise((resolve) => {
+    chrome.storage.local.get([scopedStorageKey, MERMAID_FAVORITES_STORAGE_KEY], (result) => {
+      const scopedValue = result?.[scopedStorageKey];
+      if (scopedValue !== undefined) {
+        resolve(sanitizeMermaidFavorites(scopedValue));
+        return;
+      }
       resolve(sanitizeMermaidFavorites(result?.[MERMAID_FAVORITES_STORAGE_KEY]));
     });
   });
 }
 
-export async function saveMermaidFavorites(items: MermaidFavorite[]): Promise<void> {
+export async function saveMermaidFavorites(items: MermaidFavorite[], scope?: string): Promise<void> {
   if (!chrome?.storage?.local) {
     return;
   }
 
+  const storageKey = buildScopedStorageKey(MERMAID_FAVORITES_STORAGE_KEY, scope);
   await new Promise<void>((resolve) => {
-    chrome.storage.local.set({ [MERMAID_FAVORITES_STORAGE_KEY]: sanitizeMermaidFavorites(items) }, () => resolve());
+    chrome.storage.local.set({ [storageKey]: sanitizeMermaidFavorites(items) }, () => resolve());
   });
 }
 
@@ -134,4 +161,3 @@ export function createMermaidFavoriteId(): string {
   const random = Math.random().toString(36).slice(2, 8);
   return `mermaid_fav_${Date.now().toString(36)}_${random}`;
 }
-

@@ -3,7 +3,7 @@ import {
   createEmptyClassificationState,
   createEntityId,
   isDuplicateName,
-  loadClassificationState,
+  loadClassificationStateByScope,
   normalizeName,
   saveClassificationState,
   type ClassificationState,
@@ -12,7 +12,7 @@ import {
 import {
   collectVisibleConversations,
   type ConversationEntry,
-  loadConversationIndex,
+  loadConversationIndexByScope,
   mergeConversationIndex,
   observeConversationList,
   saveConversationIndex
@@ -20,6 +20,7 @@ import {
 import {
   exportCurrentConversationToHtml,
   exportCurrentConversationToMarkdown,
+  exportCurrentConversationToPdf,
   extractMessageHtmlFromNode,
   extractMessageMarkdownFromNode
 } from "./conversationExport";
@@ -45,7 +46,7 @@ import {
   createPromptPresetId,
   extractPromptVariables,
   fillPromptVariables,
-  loadPromptLibrary,
+  loadPromptLibraryByScope,
   normalizePromptContent,
   normalizePromptPresetName,
   normalizePromptPresetValues,
@@ -58,13 +59,13 @@ import {
 } from "./promptLibrary";
 import {
   createFormulaFavoriteId,
-  loadFormulaFavorites,
+  loadFormulaFavoritesByScope,
   saveFormulaFavorites,
   type FormulaFavorite
 } from "./formulaFavoritesStore";
 import {
   createMermaidFavoriteId,
-  loadMermaidFavorites,
+  loadMermaidFavoritesByScope,
   normalizeMermaidCodeForMatch,
   saveMermaidFavorites,
   type MermaidFavorite
@@ -72,7 +73,7 @@ import {
 import {
   buildTimelineAnnotationKey,
   createTimelineAnnotationId,
-  loadTimelineAnnotations,
+  loadTimelineAnnotationsByScope,
   normalizeTimelineAnnotationTags,
   saveTimelineAnnotations,
   type TimelineNodeAnnotation
@@ -90,6 +91,8 @@ import {
   createBackupPayload,
   parseBackupPayload
 } from "./dataBackup";
+import { detectAccountScope, type AccountScopeInfo } from "./accountScope";
+import { normalizeStorageScope } from "./storageScope";
 
 type PanelState = {
   collapsed: boolean;
@@ -154,7 +157,31 @@ const CONVERSATION_ROW_HEIGHT_COMPACT = 150;
 const CONVERSATION_ROW_HEIGHT_STANDARD = 188;
 const CONVERSATION_VIRTUAL_OVERSCAN = 6;
 const CONVERSATION_LIST_FALLBACK_HEIGHT = 520;
+const QUOTE_REPLY_BADGE_ID = "gpt-voyager-quote-reply-badge";
 const EMPTY_META: ConversationClassificationMeta = { tagIds: [] };
+
+function resolveActiveStorageScope(settings: UserSettings, detected: AccountScopeInfo): string {
+  if (!settings.accountIsolationEnabled) {
+    return "global";
+  }
+  const manual = normalizeStorageScope(settings.accountIsolationManualScope);
+  if (manual && manual !== "global") {
+    return manual;
+  }
+  return normalizeStorageScope(detected.scope);
+}
+
+function isNodeInsideVoyagerHost(node: Node | null): boolean {
+  if (!node) {
+    return false;
+  }
+  const host = document.getElementById(EXTENSION_HOST_ID);
+  if (host && host.contains(node)) {
+    return true;
+  }
+  const root = node.getRootNode();
+  return root instanceof ShadowRoot && root.host?.id === EXTENSION_HOST_ID;
+}
 
 async function loadPanelState(): Promise<PanelState> {
   if (!chrome?.storage?.local) {
@@ -678,6 +705,16 @@ function insertPromptToComposer(content: string, mode: "append" | "replace"): bo
   return false;
 }
 
+function toQuotedReplyText(raw: string): string {
+  const normalized = raw.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return "";
+  }
+  const lines = normalized.split("\n").map((line) => line.trimEnd());
+  const quoted = lines.map((line) => (line ? `> ${line}` : ">")).join("\n");
+  return `${quoted}\n\n`;
+}
+
 async function copyPromptText(content: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(content);
@@ -1085,6 +1122,14 @@ export function App(): React.ReactElement {
   const [mermaidFavoriteReady, setMermaidFavoriteReady] = useState(false);
   const [timelineAnnotationReady, setTimelineAnnotationReady] = useState(false);
   const [settingsReady, setSettingsReady] = useState(false);
+  const [detectedAccountScope, setDetectedAccountScope] = useState<AccountScopeInfo>(() => detectAccountScope(document));
+
+  const [indexLoadedScope, setIndexLoadedScope] = useState("");
+  const [classificationLoadedScope, setClassificationLoadedScope] = useState("");
+  const [promptLoadedScope, setPromptLoadedScope] = useState("");
+  const [formulaFavoriteLoadedScope, setFormulaFavoriteLoadedScope] = useState("");
+  const [mermaidFavoriteLoadedScope, setMermaidFavoriteLoadedScope] = useState("");
+  const [timelineLoadedScope, setTimelineLoadedScope] = useState("");
 
   const [query, setQuery] = useState("");
   const [timelineQuery, setTimelineQuery] = useState("");
@@ -1156,6 +1201,10 @@ export function App(): React.ReactElement {
   const formulaNodeMapRef = useRef<Record<string, HTMLElement>>({});
   const mermaidNodeMapRef = useRef<Record<string, HTMLElement>>({});
   const activeConversationId = getCurrentConversationId();
+  const activeStorageScope = useMemo(
+    () => resolveActiveStorageScope(settings, detectedAccountScope),
+    [detectedAccountScope, settings]
+  );
 
   const timelineRoleFilterOptions = useMemo<Array<SelectOption<"all" | TimelineRole>>>(
     () => [
@@ -1193,6 +1242,20 @@ export function App(): React.ReactElement {
   }, []);
 
   useEffect(() => {
+    const refreshScope = () => {
+      setDetectedAccountScope(detectAccountScope(document));
+    };
+    const timer = window.setTimeout(refreshScope, 600);
+    window.addEventListener("focus", refreshScope);
+    document.addEventListener("visibilitychange", refreshScope);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", refreshScope);
+      document.removeEventListener("visibilitychange", refreshScope);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!panelReady) {
       return;
     }
@@ -1203,87 +1266,107 @@ export function App(): React.ReactElement {
 
   useEffect(() => {
     let active = true;
-    loadConversationIndex().then((entries) => {
+    setIndexReady(false);
+    setIndexLoadedScope("");
+    loadConversationIndexByScope(activeStorageScope).then((entries) => {
       if (!active) {
         return;
       }
-      setConversationIndex((previous) => mergeConversationIndex(entries, previous));
+      setConversationIndex(entries);
+      setSelectedConversationIds([]);
+      setIndexLoadedScope(activeStorageScope);
       setIndexReady(true);
     });
     return () => {
       active = false;
     };
-  }, []);
+  }, [activeStorageScope]);
 
   useEffect(() => {
     let active = true;
-    loadClassificationState().then((state) => {
+    setClassificationReady(false);
+    setClassificationLoadedScope("");
+    loadClassificationStateByScope(activeStorageScope).then((state) => {
       if (!active) {
         return;
       }
       setClassificationState(state);
+      setClassificationLoadedScope(activeStorageScope);
       setClassificationReady(true);
     });
     return () => {
       active = false;
     };
-  }, []);
+  }, [activeStorageScope]);
 
   useEffect(() => {
     let active = true;
-    loadPromptLibrary().then((snippets) => {
+    setPromptReady(false);
+    setPromptLoadedScope("");
+    loadPromptLibraryByScope(activeStorageScope).then((snippets) => {
       if (!active) {
         return;
       }
       setPromptLibrary(snippets);
+      setSelectedPromptIds([]);
+      setPromptLoadedScope(activeStorageScope);
       setPromptReady(true);
     });
     return () => {
       active = false;
     };
-  }, []);
+  }, [activeStorageScope]);
 
   useEffect(() => {
     let active = true;
-    loadFormulaFavorites().then((items) => {
+    setFormulaFavoriteReady(false);
+    setFormulaFavoriteLoadedScope("");
+    loadFormulaFavoritesByScope(activeStorageScope).then((items) => {
       if (!active) {
         return;
       }
       setFormulaFavorites(items);
+      setFormulaFavoriteLoadedScope(activeStorageScope);
       setFormulaFavoriteReady(true);
     });
     return () => {
       active = false;
     };
-  }, []);
+  }, [activeStorageScope]);
 
   useEffect(() => {
     let active = true;
-    loadMermaidFavorites().then((items) => {
+    setMermaidFavoriteReady(false);
+    setMermaidFavoriteLoadedScope("");
+    loadMermaidFavoritesByScope(activeStorageScope).then((items) => {
       if (!active) {
         return;
       }
       setMermaidFavorites(items);
+      setMermaidFavoriteLoadedScope(activeStorageScope);
       setMermaidFavoriteReady(true);
     });
     return () => {
       active = false;
     };
-  }, []);
+  }, [activeStorageScope]);
 
   useEffect(() => {
     let active = true;
-    loadTimelineAnnotations().then((items) => {
+    setTimelineAnnotationReady(false);
+    setTimelineLoadedScope("");
+    loadTimelineAnnotationsByScope(activeStorageScope).then((items) => {
       if (!active) {
         return;
       }
       setTimelineAnnotations(items);
+      setTimelineLoadedScope(activeStorageScope);
       setTimelineAnnotationReady(true);
     });
     return () => {
       active = false;
     };
-  }, []);
+  }, [activeStorageScope]);
 
   useEffect(() => {
     let active = true;
@@ -1319,76 +1402,76 @@ export function App(): React.ReactElement {
   }, [settings.autoScanEnabled, settings.scanIntervalSec]);
 
   useEffect(() => {
-    if (!indexReady) {
+    if (!indexReady || indexLoadedScope !== activeStorageScope) {
       return;
     }
     const timer = window.setTimeout(() => {
-      saveConversationIndex(conversationIndex).catch(() => {
+      saveConversationIndex(conversationIndex, activeStorageScope).catch(() => {
         // Ignore storage errors and keep runtime state.
       });
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [conversationIndex, indexReady]);
+  }, [activeStorageScope, conversationIndex, indexLoadedScope, indexReady]);
 
   useEffect(() => {
-    if (!classificationReady) {
+    if (!classificationReady || classificationLoadedScope !== activeStorageScope) {
       return;
     }
     const timer = window.setTimeout(() => {
-      saveClassificationState(classificationState).catch(() => {
+      saveClassificationState(classificationState, activeStorageScope).catch(() => {
         // Ignore storage errors and keep runtime state.
       });
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [classificationReady, classificationState]);
+  }, [activeStorageScope, classificationLoadedScope, classificationReady, classificationState]);
 
   useEffect(() => {
-    if (!promptReady) {
+    if (!promptReady || promptLoadedScope !== activeStorageScope) {
       return;
     }
     const timer = window.setTimeout(() => {
-      savePromptLibrary(promptLibrary).catch(() => {
+      savePromptLibrary(promptLibrary, activeStorageScope).catch(() => {
         // Ignore storage errors and keep runtime state.
       });
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [promptLibrary, promptReady]);
+  }, [activeStorageScope, promptLibrary, promptLoadedScope, promptReady]);
 
   useEffect(() => {
-    if (!formulaFavoriteReady) {
+    if (!formulaFavoriteReady || formulaFavoriteLoadedScope !== activeStorageScope) {
       return;
     }
     const timer = window.setTimeout(() => {
-      saveFormulaFavorites(formulaFavorites).catch(() => {
+      saveFormulaFavorites(formulaFavorites, activeStorageScope).catch(() => {
         // Ignore storage errors and keep runtime state.
       });
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [formulaFavoriteReady, formulaFavorites]);
+  }, [activeStorageScope, formulaFavoriteLoadedScope, formulaFavoriteReady, formulaFavorites]);
 
   useEffect(() => {
-    if (!mermaidFavoriteReady) {
+    if (!mermaidFavoriteReady || mermaidFavoriteLoadedScope !== activeStorageScope) {
       return;
     }
     const timer = window.setTimeout(() => {
-      saveMermaidFavorites(mermaidFavorites).catch(() => {
+      saveMermaidFavorites(mermaidFavorites, activeStorageScope).catch(() => {
         // Ignore storage errors and keep runtime state.
       });
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [mermaidFavoriteReady, mermaidFavorites]);
+  }, [activeStorageScope, mermaidFavoriteLoadedScope, mermaidFavoriteReady, mermaidFavorites]);
 
   useEffect(() => {
-    if (!timelineAnnotationReady) {
+    if (!timelineAnnotationReady || timelineLoadedScope !== activeStorageScope) {
       return;
     }
     const timer = window.setTimeout(() => {
-      saveTimelineAnnotations(timelineAnnotations).catch(() => {
+      saveTimelineAnnotations(timelineAnnotations, activeStorageScope).catch(() => {
         // Ignore storage errors and keep runtime state.
       });
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [timelineAnnotationReady, timelineAnnotations]);
+  }, [activeStorageScope, timelineAnnotationReady, timelineAnnotations, timelineLoadedScope]);
 
   useEffect(() => {
     if (!settingsReady) {
@@ -2696,6 +2779,15 @@ export function App(): React.ReactElement {
     setExportStatus(`HTML 已导出（${result.messageCount} 条）`);
   }, []);
 
+  const exportConversationPdf = useCallback(() => {
+    const result = exportCurrentConversationToPdf();
+    if (!result.ok) {
+      setExportStatus(result.reason);
+      return;
+    }
+    setExportStatus(`已打开 PDF 打印窗口（${result.messageCount} 条，含图片）`);
+  }, []);
+
   const exportConversationDefault = useCallback(() => {
     if (settings.defaultExportFormat === "html") {
       exportConversationHtml();
@@ -2780,12 +2872,12 @@ export function App(): React.ReactElement {
       setLastBatchUndo(null);
 
       await Promise.all([
-        saveConversationIndex(nextConversationIndex),
-        saveClassificationState(nextClassificationState),
-        savePromptLibrary(nextPromptLibrary),
-        saveFormulaFavorites(nextFormulaFavorites),
-        saveMermaidFavorites(nextMermaidFavorites),
-        saveTimelineAnnotations(nextTimelineAnnotations),
+        saveConversationIndex(nextConversationIndex, activeStorageScope),
+        saveClassificationState(nextClassificationState, activeStorageScope),
+        savePromptLibrary(nextPromptLibrary, activeStorageScope),
+        saveFormulaFavorites(nextFormulaFavorites, activeStorageScope),
+        saveMermaidFavorites(nextMermaidFavorites, activeStorageScope),
+        saveTimelineAnnotations(nextTimelineAnnotations, activeStorageScope),
         saveUserSettings(nextSettings)
       ]);
 
@@ -2795,7 +2887,7 @@ export function App(): React.ReactElement {
     } catch {
       setBackupStatus("导入失败：读取文件时发生错误");
     }
-  }, [classificationReady, formulaFavoriteReady, indexReady, mermaidFavoriteReady, promptReady, settingsReady, timelineAnnotationReady]);
+  }, [activeStorageScope, classificationReady, formulaFavoriteReady, indexReady, mermaidFavoriteReady, promptReady, settingsReady, timelineAnnotationReady]);
 
   useEffect(() => {
     if (!settings.formulaClickCopyEnabled) {
@@ -2834,6 +2926,115 @@ export function App(): React.ReactElement {
     document.addEventListener("click", onDocumentClick, true);
     return () => document.removeEventListener("click", onDocumentClick, true);
   }, [notifyFormulaCopied, settings.formulaClickCopyEnabled]);
+
+  useEffect(() => {
+    const removeBadge = () => {
+      document.getElementById(QUOTE_REPLY_BADGE_ID)?.remove();
+    };
+
+    if (!settings.quoteReplyEnabled) {
+      removeBadge();
+      return;
+    }
+
+    const showQuoteReplyBadge = (rawText: string, rect: DOMRect) => {
+      removeBadge();
+      if (rect.width <= 0 && rect.height <= 0) {
+        return;
+      }
+
+      const quoteText = toQuotedReplyText(rawText);
+      if (!quoteText) {
+        return;
+      }
+
+      const badge = document.createElement("button");
+      badge.id = QUOTE_REPLY_BADGE_ID;
+      badge.type = "button";
+      badge.textContent = "引用回复";
+      const docLeft = window.scrollX + rect.left;
+      const docTop = window.scrollY + rect.top;
+      const minLeft = window.scrollX + 8;
+      const maxLeft = window.scrollX + window.innerWidth - 92;
+      const preferredLeft = docLeft + rect.width - 84;
+      const left = Math.min(maxLeft, Math.max(minLeft, preferredLeft));
+      const topAbove = docTop - 32;
+      const minTop = window.scrollY + 8;
+      const top = topAbove < minTop ? docTop + rect.height + 8 : topAbove;
+
+      badge.style.position = "absolute";
+      badge.style.left = `${left}px`;
+      badge.style.top = `${top}px`;
+      badge.style.zIndex = "2147483647";
+      badge.style.border = "1px solid #d5dbe3";
+      badge.style.borderRadius = "999px";
+      badge.style.background = "rgba(255,255,255,0.98)";
+      badge.style.color = "#334155";
+      badge.style.padding = "6px 10px";
+      badge.style.fontSize = "12px";
+      badge.style.fontWeight = "600";
+      badge.style.cursor = "pointer";
+      badge.style.boxShadow = "0 4px 14px rgba(15, 23, 42, 0.12)";
+      badge.style.transition = "opacity 140ms ease";
+
+      badge.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const ok = insertPromptToComposer(quoteText, "append");
+        if (ok) {
+          setPromptStatus("已插入引用内容");
+        } else {
+          setPromptStatus("插入失败：未找到输入框");
+        }
+        removeBadge();
+      });
+
+      document.body.appendChild(badge);
+    };
+
+    const updateBadgeBySelection = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+        removeBadge();
+        return;
+      }
+      const range = selection.getRangeAt(0);
+      const anchorNode = selection.anchorNode;
+      if (isNodeInsideVoyagerHost(anchorNode)) {
+        removeBadge();
+        return;
+      }
+      const selectedText = selection.toString().trim();
+      if (!selectedText || selectedText.length < 2) {
+        removeBadge();
+        return;
+      }
+      showQuoteReplyBadge(selectedText.slice(0, 1200), range.getBoundingClientRect());
+    };
+
+    const onMouseUp = () => {
+      window.setTimeout(updateBadgeBySelection, 24);
+    };
+    const onSelectionChange = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed) {
+        removeBadge();
+      }
+    };
+    const onScroll = () => removeBadge();
+
+    document.addEventListener("mouseup", onMouseUp, true);
+    document.addEventListener("selectionchange", onSelectionChange, true);
+    document.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onScroll);
+    return () => {
+      removeBadge();
+      document.removeEventListener("mouseup", onMouseUp, true);
+      document.removeEventListener("selectionchange", onSelectionChange, true);
+      document.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [settings.quoteReplyEnabled]);
 
   useEffect(() => {
     const widthPercent = clampChatContentWidthPercent(settings.chatContentWidthPercent);
@@ -4332,6 +4533,9 @@ main form [class*="max-w"] {
                 <button className="gv-mini-btn" type="button" onClick={exportConversationHtml}>
                   导出 HTML
                 </button>
+                <button className="gv-mini-btn" type="button" onClick={exportConversationPdf}>
+                  导出 PDF
+                </button>
               </div>
             </div>
             <p className="gv-metric">
@@ -4952,6 +5156,7 @@ main form [class*="max-w"] {
               <li>先在“会话工作台”点一次“重新扫描”，建立本地会话索引。</li>
               <li>通过搜索、文件夹、标签筛选找到会话，点击标题可直接打开。</li>
               <li>在“提示词库”保存常用模板，支持复制、插入、变量填充与批量导出。</li>
+              <li>页面选中文本后会出现“引用回复”按钮，可一键带引用插入输入框。</li>
               <li>在“设置中心”按你的习惯调整扫描、导出格式和快捷键。</li>
             </ol>
           </section>
@@ -4973,7 +5178,7 @@ main form [class*="max-w"] {
               </article>
               <article className="gv-guide-card">
                 <h3>导出能力</h3>
-                <p>当前会话支持导出 Markdown / HTML，公式会尽量保留 LaTeX 可用形式。</p>
+                <p>当前会话支持导出 Markdown / HTML / PDF（含图片），公式会尽量保留 LaTeX 可用形式。</p>
               </article>
             </div>
           </section>
@@ -5128,6 +5333,52 @@ main form [class*="max-w"] {
                   }
                 />
               </label>
+
+              <label className="gv-setting-item">
+                <span>选中文本一键引用回复</span>
+                <input
+                  type="checkbox"
+                  checked={settings.quoteReplyEnabled}
+                  onChange={(event) =>
+                    setSettings((previous) => ({
+                      ...previous,
+                      quoteReplyEnabled: event.target.checked
+                    }))
+                  }
+                />
+              </label>
+
+              <label className="gv-setting-item">
+                <span>账户隔离模式（按 ChatGPT 账号隔离索引/提示词/收藏）</span>
+                <input
+                  type="checkbox"
+                  checked={settings.accountIsolationEnabled}
+                  onChange={(event) =>
+                    setSettings((previous) => ({
+                      ...previous,
+                      accountIsolationEnabled: event.target.checked
+                    }))
+                  }
+                />
+              </label>
+
+              <div className="gv-setting-item gv-setting-item-stack">
+                <span>账户隔离手动标识（可选）</span>
+                <input
+                  className="gv-input"
+                  type="text"
+                  value={settings.accountIsolationManualScope}
+                  onChange={(event) =>
+                    setSettings((previous) => ({
+                      ...previous,
+                      accountIsolationManualScope: event.target.value
+                    }))
+                  }
+                  placeholder="例如：work_email 或 school_account"
+                />
+                <span className="gv-inline-empty">{`自动识别：${detectedAccountScope.label}（${detectedAccountScope.source}）`}</span>
+                <span className="gv-inline-empty">{`当前数据作用域：${activeStorageScope}`}</span>
+              </div>
 
               <div className="gv-setting-item gv-setting-item-stack">
                 <span>{`聊天区宽度（${settings.chatContentWidthPercent}% 视口）`}</span>
