@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 
@@ -18,9 +18,9 @@ const styles = `
   --gv-line-strong: #d4d9de;
   --gv-text: #16181d;
   --gv-text-soft: #666d78;
-  --gv-accent: #10a37f;
-  --gv-accent-soft: #eff9f5;
-  --gv-focus: rgba(16, 163, 127, 0.22);
+  --gv-accent: #374151;
+  --gv-accent-soft: #f3f4f6;
+  --gv-focus: rgba(51, 65, 85, 0.24);
   --gv-danger: #c23d4b;
 }
 
@@ -196,10 +196,10 @@ const styles = `
 }
 
 .gv-nav-btn-active {
-  border-color: #8ac9b8;
-  color: #10664f;
+  border-color: #c8d1dd;
+  color: #1f2937;
   background: var(--gv-accent-soft);
-  box-shadow: inset 0 0 0 1px #d7eee7, 0 1px 2px rgba(15, 23, 42, 0.04);
+  box-shadow: inset 0 0 0 1px #e5e7eb, 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .gv-nav-btn:focus-visible {
@@ -249,8 +249,8 @@ const styles = `
 }
 
 .gv-section-highlight {
-  border-color: #dcefe8;
-  background: linear-gradient(180deg, #ffffff, #f8fcfa);
+  border-color: #e2e8f0;
+  background: linear-gradient(180deg, #ffffff, #f8fafc);
 }
 
 .gv-stat-grid {
@@ -283,10 +283,10 @@ const styles = `
 .gv-stat-cta {
   margin-top: 8px;
   width: 100%;
-  border: 1px solid #d5e8e1;
+  border: 1px solid #d6dde7;
   border-radius: 12px;
-  background: #f4fbf8;
-  color: #195e4a;
+  background: #f7f9fc;
+  color: #334155;
   min-height: 36px;
   display: flex;
   align-items: center;
@@ -299,13 +299,13 @@ const styles = `
 }
 
 .gv-stat-cta:hover {
-  border-color: #9fd2c2;
-  box-shadow: 0 2px 8px rgba(16, 163, 127, 0.08);
+  border-color: #c4ceda;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
 }
 
 .gv-stat-cta-active {
-  border-color: #8ecdbb;
-  background: #ebf8f3;
+  border-color: #bcc8d6;
+  background: #f1f5f9;
 }
 
 .gv-section h2 {
@@ -361,9 +361,9 @@ const styles = `
 }
 
 .gv-mini-btn-active {
-  border-color: #8ac9b8;
-  background: #ecf9f4;
-  color: #176c56;
+  border-color: #c8d1dd;
+  background: #f3f4f6;
+  color: #1f2937;
 }
 
 .gv-danger-btn {
@@ -397,7 +397,7 @@ const styles = `
 
 .gv-export-status {
   margin: -2px 0 8px;
-  color: #0f8c6d;
+  color: #475569;
   font-size: 11px;
   animation: gv-fade-in 220ms ease;
 }
@@ -422,7 +422,7 @@ const styles = `
 .gv-input:focus,
 .gv-select:focus,
 .gv-textarea:focus {
-  border-color: #8ac9b8;
+  border-color: #c8d1dd;
   box-shadow: 0 0 0 3px var(--gv-focus);
 }
 
@@ -451,7 +451,7 @@ const styles = `
 }
 
 .gv-status {
-  color: #0f8c6d;
+  color: #475569;
   font-size: 11px;
   margin-left: auto;
 }
@@ -500,8 +500,8 @@ const styles = `
 }
 
 .gv-timeline-item-active {
-  border-color: #8fcdbc;
-  background: #ecf8f3;
+  border-color: #c0ccd9;
+  background: #f5f7fa;
 }
 
 .gv-timeline-head {
@@ -528,7 +528,7 @@ const styles = `
 .gv-timeline-highlight-badge {
   border: 1px solid #b6dccc;
   border-radius: 999px;
-  background: #edf8f4;
+  background: #f3f6fa;
   color: #176d57;
   font-size: 10px;
   line-height: 1;
@@ -584,8 +584,8 @@ const styles = `
 }
 
 .gv-formula-item-active {
-  border-color: #8fcdbc;
-  background: #ecf8f3;
+  border-color: #c0ccd9;
+  background: #f5f7fa;
 }
 
 .gv-formula-head {
@@ -621,9 +621,9 @@ const styles = `
 }
 
 .gv-formula-inline {
-  border-color: #bad7cf;
-  background: #eef8f4;
-  color: #1d715b;
+  border-color: #cfd8e3;
+  background: #f4f7fb;
+  color: #334155;
 }
 
 .gv-formula-display {
@@ -649,9 +649,9 @@ const styles = `
 
 .gv-formula-copied {
   margin: 0 0 8px;
-  border: 1px solid #d9ece4;
+  border: 1px solid #d8dee7;
   border-radius: 11px;
-  background: #f3fbf7;
+  background: #f3f6fa;
   padding: 8px;
   animation: gv-fade-in 220ms ease;
 }
@@ -662,7 +662,7 @@ const styles = `
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  color: #49685d;
+  color: #5b6574;
   font-size: 11px;
 }
 
@@ -735,8 +735,8 @@ const styles = `
 }
 
 .gv-mermaid-item-active {
-  border-color: #8fcdbc;
-  background: #ecf8f3;
+  border-color: #c0ccd9;
+  background: #f5f7fa;
 }
 
 .gv-mermaid-head {
@@ -819,9 +819,9 @@ const styles = `
 }
 
 .gv-role-user {
-  border-color: #bad7cf;
-  background: #eef8f4;
-  color: #1d715b;
+  border-color: #cfd8e3;
+  background: #f4f7fb;
+  color: #334155;
 }
 
 .gv-role-assistant {
@@ -867,14 +867,14 @@ const styles = `
 }
 
 .gv-item:hover {
-  border-color: #c8d9d2;
+  border-color: #ccd5df;
   background: #fbfdfc;
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
 }
 
 .gv-item-active {
-  border-color: #8fcdbc;
-  background: #ecf8f3;
+  border-color: #c0ccd9;
+  background: #f5f7fa;
 }
 
 .gv-item-open {
@@ -914,7 +914,7 @@ const styles = `
 .gv-check-wrap input[type="checkbox"] {
   width: 14px;
   height: 14px;
-  accent-color: #10a37f;
+  accent-color: #374151;
 }
 
 .gv-item-meta {
@@ -995,9 +995,9 @@ const styles = `
 }
 
 .gv-folder-pill-active {
-  border-color: #afd7c9;
-  background: #eef8f4;
-  color: #1b6c56;
+  border-color: #c4ceda;
+  background: #f4f7fb;
+  color: #334155;
 }
 
 .gv-filter-simple-row {
@@ -1081,14 +1081,14 @@ const styles = `
 }
 
 .gv-star-btn:hover {
-  border-color: #afc8bf;
-  background: #f4faf7;
+  border-color: #c4ceda;
+  background: #f6f8fb;
 }
 
 .gv-star-btn-active {
-  border-color: #8fcdbc;
-  background: #ebf8f3;
-  color: #166f58;
+  border-color: #c0ccd9;
+  background: #f1f5f9;
+  color: #334155;
 }
 
 .gv-select {
@@ -1133,8 +1133,8 @@ const styles = `
 }
 
 .gv-inline-select-btn-open {
-  border-color: #8ac9b8;
-  box-shadow: 0 0 0 2px rgba(16, 163, 127, 0.15);
+  border-color: #c8d1dd;
+  box-shadow: 0 0 0 2px rgba(51, 65, 85, 0.16);
 }
 
 .gv-inline-select-arrow {
@@ -1182,8 +1182,8 @@ const styles = `
 }
 
 .gv-inline-select-option-active {
-  background: #eaf6f1;
-  color: #166e57;
+  background: #eef2f7;
+  color: #334155;
 }
 
 .gv-chip-wrap {
@@ -1206,8 +1206,8 @@ const styles = `
 }
 
 .gv-chip-tag {
-  border-color: #b8dccf;
-  background: #f0faf6;
+  border-color: #cfd8e3;
+  background: #f4f7fb;
 }
 
 .gv-chip-remove {
@@ -1226,7 +1226,7 @@ const styles = `
 }
 
 .gv-folder-badge {
-  color: #2f7e68;
+  color: #475569;
   font-size: 11px;
   white-space: nowrap;
 }
@@ -1251,9 +1251,9 @@ const styles = `
 }
 
 .gv-tag-active {
-  border-color: #afdbc9;
-  background: #edf8f4;
-  color: #1d715b;
+  border-color: #c9d3df;
+  background: #f3f6fa;
+  color: #334155;
 }
 
 .gv-settings-grid {
@@ -1291,7 +1291,7 @@ const styles = `
 
 .gv-range {
   width: 100%;
-  accent-color: #10a37f;
+  accent-color: #374151;
   cursor: pointer;
 }
 
@@ -1317,7 +1317,7 @@ const styles = `
 
 .gv-prompt-item:hover {
   transform: translateY(-1px);
-  border-color: #c8d9d2;
+  border-color: #ccd5df;
 }
 
 .gv-prompt-title {
@@ -1690,3 +1690,5 @@ if (document.readyState === "loading") {
 } else {
   boot();
 }
+
+

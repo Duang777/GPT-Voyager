@@ -744,9 +744,9 @@ function showPageFormulaCopyFeedback(element: HTMLElement, copiedKind: "Word" | 
   const accent =
     copiedKind === "Word"
       ? {
-          badgeBorder: "rgba(16, 163, 127, 0.32)",
+          badgeBorder: "rgba(71, 85, 105, 0.32)",
           badgeBg: "rgba(255, 255, 255, 0.96)",
-          badgeColor: "#0f7e63",
+          badgeColor: "#334155",
           tag: "已复制 Word 公式"
         }
       : {
@@ -1582,7 +1582,7 @@ export function App(): React.ReactElement {
     const previousOutlineOffset = node.style.outlineOffset;
     const previousTransition = node.style.transition;
     node.style.transition = "outline-color 220ms ease";
-    node.style.outline = "2px solid #10a37f";
+    node.style.outline = "2px solid #64748b";
     node.style.outlineOffset = "2px";
     window.setTimeout(() => {
       node.style.outline = previousOutline;
@@ -1756,7 +1756,7 @@ export function App(): React.ReactElement {
     const previousOutlineOffset = node.style.outlineOffset;
     const previousTransition = node.style.transition;
     node.style.transition = "outline-color 220ms ease";
-    node.style.outline = "2px solid #10a37f";
+    node.style.outline = "2px solid #64748b";
     node.style.outlineOffset = "2px";
     window.setTimeout(() => {
       node.style.outline = previousOutline;
@@ -1779,7 +1779,7 @@ export function App(): React.ReactElement {
     const previousOutlineOffset = node.style.outlineOffset;
     const previousTransition = node.style.transition;
     node.style.transition = "outline-color 220ms ease";
-    node.style.outline = "2px solid #10a37f";
+    node.style.outline = "2px solid #64748b";
     node.style.outlineOffset = "2px";
     window.setTimeout(() => {
       node.style.outline = previousOutline;
@@ -2070,9 +2070,9 @@ export function App(): React.ReactElement {
     style.id = TIMELINE_HIGHLIGHT_STYLE_ID;
     style.textContent = `
       [${TIMELINE_HIGHLIGHT_ATTR}="true"] {
-        outline: 2px solid rgba(16, 163, 127, 0.6) !important;
+        outline: 2px solid rgba(71, 85, 105, 0.55) !important;
         outline-offset: 2px !important;
-        box-shadow: inset 0 0 0 1px rgba(16, 163, 127, 0.16) !important;
+        box-shadow: inset 0 0 0 1px rgba(71, 85, 105, 0.16) !important;
         border-radius: 10px !important;
       }
     `;

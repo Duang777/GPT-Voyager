@@ -57,3 +57,4 @@
 | 2026-03-04 | FEAT-045 | README 专业化重构与大图标展示 | docs | N/A | `docs/features/2026-03-04-p1-readme-professionalization-and-large-icon.md` | 顶部改为大图标并重构为专业项目主页结构，保留在线网页与 Release 入口 |
 | 2026-03-04 | FEAT-046 | 仓库重命名与 README 链接同步 | chore/docs | N/A | `docs/features/2026-03-04-p1-repo-rename-and-readme-link-sync.md` | 仓库改名为 GPT-Voyager，并同步 About/远端/README 外链到新路径 |
 | 2026-03-05 | FEAT-047 | 侧边栏 UI 重构（极简白色专业风） | feat/ui | N/A | `docs/features/2026-03-05-p1-sidebar-ui-minimal-white-refactor.md` | 重构顶部信息层级与全局控件体系，统一白色专业风并补强 focus/reduced-motion |
+| 2026-03-05 | FEAT-048 | 去绿色化高亮重构（中性灰黑强调） | ui/fix | N/A | `docs/features/2026-03-05-p1-remove-green-highlights-neutral-accent.md` | 将导航/卡片/焦点/定位等绿色强调统一替换为中性灰黑体系 |
